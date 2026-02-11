@@ -9,9 +9,22 @@ router.post('/create', authMiddleware, rideController.createRide);
 // Get nearby rides (Driver)
 router.get('/nearby', authMiddleware, rideController.getNearbyRides);
 
-// Bidding System
-router.post('/offer', authMiddleware, rideController.makeOffer);
-router.get('/offers/:ride_id', authMiddleware, rideController.getOffers);
-router.post('/accept-offer', authMiddleware, rideController.acceptOffer);
+// Cancel a ride (User/Driver)
+router.post('/cancel', authMiddleware, rideController.cancelRide);
+
+// Accept a ride (Driver)
+router.post('/accept', authMiddleware, rideController.acceptRide);
+
+// Start a ride (Driver)
+router.post('/start', authMiddleware, rideController.startRide);
+
+// Complete a ride (Driver)
+router.post('/complete', authMiddleware, rideController.completeRide);
+
+// Update ride fare (Rider)
+router.post('/update-fare', authMiddleware, rideController.updateFare);
+
+// Get ride history (User/Driver)
+router.get('/history', authMiddleware, rideController.getRideHistory);
 
 module.exports = router;

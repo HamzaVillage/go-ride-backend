@@ -2,32 +2,68 @@ const pool = require('../db/Connect_Db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const axios = require('axios');
+const FormData = require('form-data');
+
+const sendSMS = async (mobile) => {
+    try {
+        const form = new FormData();
+        form.append('mobile', mobile);
+
+        const response = await axios.post('https://nexuscodelab.com/calling/send_otp.php', form, {
+            headers: {
+                ...form.getHeaders()
+            }
+        });
+
+        if (response.data && response.data.sent && response.data.opt) {
+            return response.data.opt.toString();
+        }
+        throw new Error("Failed to send SMS via external API");
+    } catch (error) {
+        console.error("SMS API Error:", error.message);
+        throw error;
+    }
+};
+
+const cleanupOTPs = async (pool) => {
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        await conn.query("DELETE FROM otp_verifications WHERE expires_at < NOW() OR verified = 1");
+    } catch (err) {
+        console.error("OTP Cleanup Error:", err);
+    } finally {
+        if (conn) conn.release();
+    }
+};
 
 const authController = {
     sendOtp: async (req, res) => {
         const { phone_number } = req.body;
         if (!phone_number) return res.status(400).json({ success: false, message: "Phone number is required" });
 
-        const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6 digit OTP
-        const otp_hash = await bcrypt.hash(otp, 10);
-        const expires_at = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
-
-        let conn;
         try {
-            conn = await pool.getConnection();
-            await conn.query(
-                "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0",
-                [phone_number, otp_hash, expires_at, otp_hash, expires_at]
-            );
+            await cleanupOTPs(pool);
+            const otp = await sendSMS(phone_number);
+            const otp_hash = await bcrypt.hash(otp, 10);
+            const expires_at = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
-            // In a real app, send OTP via SMS here. For now, we return it in response for testing.
-            console.log(`OTP for ${phone_number}: ${otp}`);
-            res.json({ success: true, message: "OTP sent successfully", otp: otp }); // Return OTP for dev purposes
+            let conn;
+            try {
+                conn = await pool.getConnection();
+                await conn.query(
+                    "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?",
+                    [phone_number, otp_hash, expires_at, 'general', otp_hash, expires_at, 'general']
+                );
+
+                res.json({ success: true, message: "OTP sent successfully" });
+            } finally {
+                if (conn) conn.release();
+            }
         } catch (err) {
             console.error("OTP Error:", err);
             res.status(500).json({ success: false, message: "Error sending OTP", error: err.message });
-        } finally {
-            if (conn) conn.release();
         }
     },
 
@@ -49,23 +85,52 @@ const authController = {
                 return res.status(400).json({ success: false, message: "Invalid OTP" });
             }
 
-            // Mark as verified
-            await conn.query("UPDATE otp_verifications SET verified = 1 WHERE phone_number = ?", [phone_number]);
+            await conn.beginTransaction();
 
-            // Fetch user to issue token
-            const [userRows] = await conn.query("SELECT * FROM users WHERE Mobile = ?", [phone_number]);
-            if (userRows.length === 0) {
-                return res.status(404).json({ success: false, message: "User not found after verification" });
+            let user;
+            if (otpData.purpose === 'register') {
+                const payload = JSON.parse(otpData.payload);
+                const uniqueId = crypto.randomBytes(16).toString('hex');
+
+                // Create User
+                const [userResult] = await conn.query(
+                    `INSERT INTO users (User_Name, Email, Password, Mobile, Role, Unique_ID) 
+                     VALUES (?, ?, ?, ?, ?, ?)`,
+                    [payload.full_name, payload.email, payload.password, phone_number, 'rider', uniqueId]
+                );
+
+                const userId = userResult.insertId;
+
+                // Create Driver entry (pending)
+                const driverCode = 'DRV' + Math.floor(1000 + Math.random() * 9000);
+                await conn.query(
+                    `INSERT INTO drivers (driver_code, full_name, phone, email, status)
+                     VALUES (?, ?, ?, ?, ?)`,
+                    [driverCode, payload.full_name, phone_number, payload.email, 'pending']
+                );
+
+                const [newUserRows] = await conn.query("SELECT * FROM users WHERE User_ID_Pk = ?", [userId]);
+                user = newUserRows[0];
+            } else {
+                const [userRows] = await conn.query("SELECT * FROM users WHERE Mobile = ?", [phone_number]);
+                if (userRows.length === 0) {
+                    await conn.rollback();
+                    return res.status(404).json({ success: false, message: "User not found" });
+                }
+                user = userRows[0];
             }
 
-            const user = userRows[0];
+            // Cleanup OTP
+            await conn.query("DELETE FROM otp_verifications WHERE phone_number = ?", [phone_number]);
+            await conn.commit();
+
             const token = jwt.sign(
                 { userId: user.User_ID_Pk, role: user.Role, phone: user.Mobile },
                 process.env.JWT_SECRET || 'your_fallback_secret',
                 { expiresIn: '7d' }
             );
 
-            res.json({
+            const responseData = {
                 success: true,
                 message: "OTP verified successfully",
                 token,
@@ -76,8 +141,19 @@ const authController = {
                     role: user.Role,
                     phone: user.Mobile
                 }
-            });
+            };
+
+            // If driver, add extra data
+            if (user.Role === 'driver') {
+                const [driverRows] = await conn.query("SELECT * FROM drivers WHERE phone = ?", [phone_number]);
+                if (driverRows.length > 0) {
+                    responseData.driver_profile = driverRows[0];
+                }
+            }
+
+            res.json(responseData);
         } catch (err) {
+            if (conn) await conn.rollback();
             console.error("Verify OTP Error:", err);
             res.status(500).json({ success: false, message: "Error verifying OTP", error: err.message });
         } finally {
@@ -106,49 +182,24 @@ const authController = {
                 return res.status(400).json({ success: false, message: "User already exists with this phone or email" });
             }
 
-            const hashedPassword = await bcrypt.hash(password, 10);
-            const uniqueId = crypto.randomBytes(16).toString('hex');
-
-            await conn.beginTransaction();
-
-            // Insert into users table (Role defaults to rider)
-            const [userResult] = await conn.query(
-                `INSERT INTO users (User_Name, Email, Password, Mobile, Role, Unique_ID) 
-                 VALUES (?, ?, ?, ?, ?, ?)`,
-                [full_name, email, hashedPassword, phone, 'rider', uniqueId]
-            );
-
-            const userId = userResult.insertId;
-
-            // Also insert into drivers table if they are a rider
-            const driverCode = 'DRV' + Math.floor(1000 + Math.random() * 9000);
-            await conn.query(
-                `INSERT INTO drivers (driver_code, full_name, phone, email, status)
-                 VALUES (?, ?, ?, ?, ?)`,
-                [driverCode, full_name, phone, email, 'pending']
-            );
-
-            await conn.commit();
-
-            // Automatically send OTP after registration
-            const otp = Math.floor(100000 + Math.random() * 900000).toString();
+            await cleanupOTPs(pool);
+            const otp = await sendSMS(phone);
             const otp_hash = await bcrypt.hash(otp, 10);
+            const hashedPassword = await bcrypt.hash(password, 10);
             const expires_at = new Date(Date.now() + 10 * 60 * 1000);
 
+            const payload = JSON.stringify({ full_name, email, password: hashedPassword });
+
             await conn.query(
-                "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?",
-                [phone, otp_hash, expires_at, 'register', otp_hash, expires_at, 'register']
+                "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose, payload) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?, payload = ?",
+                [phone, otp_hash, expires_at, 'register', payload, otp_hash, expires_at, 'register', payload]
             );
 
-            console.log(`Registration OTP for ${phone}: ${otp}`);
-
-            res.status(201).json({
+            res.status(200).json({
                 success: true,
-                message: "Registration successful. OTP sent for verification.",
-                otp: otp // Return for testing
+                message: "Registration OTP sent successfully. Please verify to complete account creation."
             });
         } catch (err) {
-            if (conn) await conn.rollback();
             console.error("Register Error:", err);
             res.status(500).json({ success: false, message: "Registration failed", error: err.message });
         } finally {
@@ -172,8 +223,8 @@ const authController = {
 
             if (!valid) return res.status(401).json({ success: false, message: "Invalid credentials" });
 
-            // Send OTP for login verification
-            const otp = Math.floor(100000 + Math.random() * 900000).toString();
+            await cleanupOTPs(pool);
+            const otp = await sendSMS(phone);
             const otp_hash = await bcrypt.hash(otp, 10);
             const expires_at = new Date(Date.now() + 10 * 60 * 1000);
 
@@ -182,12 +233,9 @@ const authController = {
                 [phone, otp_hash, expires_at, 'login', otp_hash, expires_at, 'login']
             );
 
-            console.log(`Login OTP for ${phone}: ${otp}`);
-
             res.json({
                 success: true,
-                message: "Credentials valid. OTP sent for verification.",
-                otp: otp // Return for testing
+                message: "Credentials valid. OTP sent for verification."
             });
         } catch (err) {
             console.error("Login Error:", err);
@@ -201,6 +249,82 @@ const authController = {
         // Since we use JWT, logout is usually handled on the client by deleting the token.
         // But we can send a success response.
         res.json({ success: true, message: "Logged out successfully" });
+    },
+
+    forgotPassword: async (req, res) => {
+        const { phone } = req.body;
+        if (!phone) return res.status(400).json({ success: false, message: "Phone number is required" });
+
+        let conn;
+        try {
+            conn = await pool.getConnection();
+            const [rows] = await conn.query("SELECT User_ID_Pk FROM users WHERE Mobile = ?", [phone]);
+            if (rows.length === 0) return res.status(404).json({ success: false, message: "User not found" });
+
+            await cleanupOTPs(pool);
+            const otp = await sendSMS(phone);
+            const otp_hash = await bcrypt.hash(otp, 10);
+            const expires_at = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+            await conn.query(
+                "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?",
+                [phone, otp_hash, expires_at, 'forgot_password', otp_hash, expires_at, 'forgot_password']
+            );
+
+            res.json({ success: true, message: "Reset OTP sent successfully" });
+        } catch (err) {
+            console.error("Forgot Password Error:", err);
+            res.status(500).json({ success: false, message: "Error sending reset OTP", error: err.message });
+        } finally {
+            if (conn) conn.release();
+        }
+    },
+
+    resetPassword: async (req, res) => {
+        const { phone, otp, new_password, confirm_password } = req.body;
+
+        if (!phone || !otp || !new_password || !confirm_password) {
+            return res.status(400).json({ success: false, message: "Missing required fields" });
+        }
+
+        if (new_password !== confirm_password) {
+            return res.status(400).json({ success: false, message: "Passwords do not match" });
+        }
+
+        let conn;
+        try {
+            conn = await pool.getConnection();
+            const [rows] = await conn.query(
+                "SELECT * FROM otp_verifications WHERE phone_number = ? AND purpose = 'forgot_password' AND verified = 0 AND expires_at > NOW()",
+                [phone]
+            );
+
+            if (rows.length === 0) return res.status(400).json({ success: false, message: "Invalid or expired OTP" });
+
+            const otpData = rows[0];
+            const valid = await bcrypt.compare(otp, otpData.otp_hash);
+            if (!valid) {
+                await conn.query("UPDATE otp_verifications SET attempts = attempts + 1 WHERE phone_number = ?", [phone]);
+                return res.status(400).json({ success: false, message: "Invalid OTP" });
+            }
+
+            const hashedPassword = await bcrypt.hash(new_password, 10);
+
+            await conn.beginTransaction();
+            // Update password
+            await conn.query("UPDATE users SET Password = ? WHERE Mobile = ?", [hashedPassword, phone]);
+            // Delete OTP
+            await conn.query("DELETE FROM otp_verifications WHERE phone_number = ? AND purpose = 'forgot_password'", [phone]);
+            await conn.commit();
+
+            res.json({ success: true, message: "Password reset successfully" });
+        } catch (err) {
+            if (conn) await conn.rollback();
+            console.error("Reset Password Error:", err);
+            res.status(500).json({ success: false, message: "Error resetting password", error: err.message });
+        } finally {
+            if (conn) conn.release();
+        }
     }
 };
 

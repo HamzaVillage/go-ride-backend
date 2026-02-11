@@ -37,7 +37,63 @@
                     "response": []
                 },
                 {
-                    "name": "Verify OTP",
+                    "name": "Register (Step 1: Send OTP)",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"full_name\": \"John Doe\",\n    \"email\": \"john@example.com\",\n    \"phone\": \"923043281816\",\n    \"password\": \"password123\",\n    \"confirm_password\": \"password123\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/auth/register",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "auth",
+                                "register"
+                            ]
+                        },
+                        "description": "Sends an OTP to the provided mobile number for registration. Account is created only after verification."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Login (Step 1: Validate & Send OTP)",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"phone\": \"923043281816\",\n    \"password\": \"password123\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/auth/login",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "auth",
+                                "login"
+                            ]
+                        },
+                        "description": "Validates credentials and sends an OTP to the mobile number for login completion."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Verify OTP (Step 2: Complete Auth)",
                     "event": [
                         {
                             "listen": "test",
@@ -57,7 +113,7 @@
                         "header": [],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n    \"phone_number\": \"1234567890\",\n    \"otp\": \"123456\"\n}",
+                            "raw": "{\n    \"phone_number\": \"923043281816\",\n    \"otp\": \"729682\"\n}",
                             "options": {
                                 "raw": {
                                     "language": "json"
@@ -73,61 +129,8 @@
                                 "auth",
                                 "verify-otp"
                             ]
-                        }
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Register",
-                    "request": {
-                        "method": "POST",
-                        "header": [],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n    \"full_name\": \"John Doe\",\n    \"email\": \"john@example.com\",\n    \"phone\": \"1234567890\",\n    \"password\": \"password123\",\n    \"confirm_password\": \"password123\"\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
                         },
-                        "url": {
-                            "raw": "{{base_url}}/auth/register",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "auth",
-                                "register"
-                            ]
-                        }
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Login",
-                    "request": {
-                        "method": "POST",
-                        "header": [],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n    \"phone\": \"1234567890\",\n    \"password\": \"password123\"\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/auth/login",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "auth",
-                                "login"
-                            ]
-                        }
+                        "description": "Verifies the OTP and completes the authentication process (Registration or Login). Returns JWT token and User/Driver data."
                     },
                     "response": []
                 },
@@ -152,6 +155,62 @@
                                 "logout"
                             ]
                         }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Forgot Password (Step 1: Send OTP)",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"phone\": \"923043281816\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/auth/forgot-password",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "auth",
+                                "forgot-password"
+                            ]
+                        },
+                        "description": "Sends an OTP to the user's mobile number to initiate password reset."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Reset Password (Step 2: Update Password)",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"phone\": \"923043281816\",\n    \"otp\": \"123456\",\n    \"new_password\": \"newpassword123\",\n    \"confirm_password\": \"newpassword123\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/auth/reset-password",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "auth",
+                                "reset-password"
+                            ]
+                        },
+                        "description": "Verifies the reset OTP and updates the user's password."
                     },
                     "response": []
                 }
@@ -229,7 +288,7 @@
                         "header": [],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n    \"vehicle_type\": \"Car\",\n    \"distance\": 10.5,\n    \"duration\": 25,\n    \"is_peak_hour\": false,\n    \"is_night\": false,\n    \"waiting_time\": 5\n}",
+                            "raw": "{\n    \"vehicle_type\": \"Auto-Rickshaw\",\n    \"distance\": 10.5,\n    \"duration\": 25,\n    \"waiting_time\": 5,\n    \"is_peak_hour\": false,\n    \"is_night\": false\n}",
                             "options": {
                                 "raw": {
                                     "language": "json"
@@ -245,7 +304,8 @@
                                 "fare",
                                 "calculate"
                             ]
-                        }
+                        },
+                        "description": "Calculates fare for the requested vehicle type and provides estimated fares for all other available vehicle types, including grouped car types. Note: `is_peak_hour` and `is_night` flags are optional and will be automatically determined based on Pakistan local time if not provided."
                     },
                     "response": []
                 }
@@ -299,7 +359,7 @@
                             }
                         ],
                         "url": {
-                            "raw": "{{base_url}}/ride/nearby?driver_lat=24.9000&driver_lng=67.1600",
+                            "raw": "{{base_url}}/ride/nearby?driver_lat=24.9000&driver_lng=67.1600&driver_id=5",
                             "host": [
                                 "{{base_url}}"
                             ],
@@ -315,6 +375,10 @@
                                 {
                                     "key": "driver_lng",
                                     "value": "67.1600"
+                                },
+                                {
+                                    "key": "driver_id",
+                                    "value": "5"
                                 }
                             ]
                         }
@@ -322,7 +386,7 @@
                     "response": []
                 },
                 {
-                    "name": "Make Fare Offer (Driver)",
+                    "name": "Accept Ride (Driver)",
                     "request": {
                         "method": "POST",
                         "header": [
@@ -334,7 +398,7 @@
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n    \"request_id\": 1,\n    \"driver_id\": 5,\n    \"offered_fare\": 900.00\n}",
+                            "raw": "{\n    \"ride_id\": 1,\n    \"driver_id\": 5\n}",
                             "options": {
                                 "raw": {
                                     "language": "json"
@@ -342,20 +406,153 @@
                             }
                         },
                         "url": {
-                            "raw": "{{base_url}}/ride/offer",
+                            "raw": "{{base_url}}/ride/accept",
                             "host": [
                                 "{{base_url}}"
                             ],
                             "path": [
                                 "ride",
-                                "offer"
+                                "accept"
                             ]
                         }
                     },
                     "response": []
                 },
                 {
-                    "name": "Get Offers for Ride (User)",
+                    "name": "Cancel Ride (User/Driver)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{auth_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"ride_id\": 1,\n    \"reason\": \"Changed my mind or car trouble\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/ride/cancel",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "ride",
+                                "cancel"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Complete Ride (Driver)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{auth_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"ride_id\": 1\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/ride/complete",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "ride",
+                                "complete"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Start Ride (Driver)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{auth_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"ride_id\": 1\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/ride/start",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "ride",
+                                "start"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Update Fare (Rider)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{auth_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"ride_id\": 1,\n    \"fare\": 650,\n    \"base_fare\": 150,\n    \"per_km_rate\": 45,\n    \"night_charge\": 50,\n    \"peak_hour_surcharge\": 100,\n    \"waiting_charges\": 20\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/ride/update-fare",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "ride",
+                                "update-fare"
+                            ]
+                        },
+                        "description": "Allows riders to update the fare for a ride that has not yet been accepted by a driver."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Ride History (User/Driver)",
                     "request": {
                         "method": "GET",
                         "header": [
@@ -366,49 +563,23 @@
                             }
                         ],
                         "url": {
-                            "raw": "{{base_url}}/ride/offers/1",
+                            "raw": "{{base_url}}/ride/history?status=Accepted",
                             "host": [
                                 "{{base_url}}"
                             ],
                             "path": [
                                 "ride",
-                                "offers",
-                                "1"
-                            ]
-                        }
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Accept Offer (User)",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{auth_token}}",
-                                "type": "text"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n    \"offer_id\": 1\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
+                                "history"
+                            ],
+                            "query": [
+                                {
+                                    "key": "status",
+                                    "value": "Accepted",
+                                    "description": "Optional: Requested, Accepted, Completed, Cancelled"
                                 }
-                            }
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/ride/accept-offer",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "ride",
-                                "accept-offer"
                             ]
-                        }
+                        },
+                        "description": "Returns ride history for the logged-in user or driver. Drivers get rides assigned to them, users get rides requested by them."
                     },
                     "response": []
                 }
