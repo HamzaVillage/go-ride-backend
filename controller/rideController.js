@@ -1,4 +1,5 @@
 const pool = require('../db/Connect_Db');
+const { getIO } = require('../socket/socketManager');
 
 const rideController = {
     createRide: async (req, res) => {
@@ -33,6 +34,18 @@ const rideController = {
                     vehicle_type, 'Requested', ride_date || new Date(), start_time || new Date()
                 ]
             );
+
+            // Emit socket event to drivers with matching vehicle type
+            try {
+                const io = getIO();
+                const [newRide] = await conn.query("SELECT * FROM ride_history WHERE Ride_ID_Pk = ?", [result.insertId]);
+                io.to(`vehicle:${vehicle_type}`).emit("new_ride_request", {
+                    ride_id: result.insertId,
+                    ride: newRide[0]
+                });
+            } catch (socketErr) {
+                console.error("Socket emit error (non-blocking):", socketErr.message);
+            }
 
             res.status(201).json({
                 success: true,
@@ -125,6 +138,24 @@ const rideController = {
                 [driver_id, ride_id]
             );
 
+            // Fetch the full ride to get the rider's user ID and notify them
+            const [updatedRide] = await conn.query("SELECT * FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
+            try {
+                const io = getIO();
+                // Notify the rider that their ride was accepted
+                io.to(`user:${updatedRide[0].User_ID_Fk}`).emit("ride_accepted", {
+                    ride_id,
+                    driver_id,
+                    ride: updatedRide[0]
+                });
+                // Notify other drivers that ride is no longer available
+                io.to(`vehicle:${updatedRide[0].Vehicle_Type}`).emit("ride_unavailable", {
+                    ride_id
+                });
+            } catch (socketErr) {
+                console.error("Socket emit error (non-blocking):", socketErr.message);
+            }
+
             res.json({ success: true, message: "Ride accepted successfully" });
         } catch (err) {
             console.error("Accept Ride Error:", err);
@@ -163,6 +194,32 @@ const rideController = {
                 [cancelled_by, reason, ride_id]
             );
 
+            // Emit cancellation notification
+            try {
+                const io = getIO();
+                const cancelPayload = { ride_id, cancelled_by, reason, ride };
+                if (cancelled_by === 'Driver' && ride.User_ID_Fk) {
+                    // Driver cancelled → notify rider
+                    io.to(`user:${ride.User_ID_Fk}`).emit("ride_cancelled", cancelPayload);
+                } else if (cancelled_by === 'User') {
+                    if (ride.Driver_ID_Fk) {
+                        // Rider cancelled after acceptance → notify driver via phone lookup
+                        const [driverRows] = await conn.query("SELECT phone FROM drivers WHERE id = ?", [ride.Driver_ID_Fk]);
+                        if (driverRows.length > 0) {
+                            const [userRows] = await conn.query("SELECT User_ID_Pk FROM users WHERE Mobile = ?", [driverRows[0].phone]);
+                            if (userRows.length > 0) {
+                                io.to(`user:${userRows[0].User_ID_Pk}`).emit("ride_cancelled", cancelPayload);
+                            }
+                        }
+                    } else {
+                        // Rider abandoned before acceptance → notify drivers in vehicle room
+                        io.to(`vehicle:${ride.Vehicle_Type}`).emit("ride_unavailable", { ride_id });
+                    }
+                }
+            } catch (socketErr) {
+                console.error("Socket emit error (non-blocking):", socketErr.message);
+            }
+
             res.json({ success: true, message: "Ride cancelled successfully" });
         } catch (err) {
             console.error("Cancel Ride Error:", err);
@@ -197,6 +254,18 @@ const rideController = {
                 [ride_id]
             );
 
+            // Notify rider that ride is completed
+            const [completedRide] = await conn.query("SELECT * FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
+            try {
+                const io = getIO();
+                io.to(`user:${completedRide[0].User_ID_Fk}`).emit("ride_completed", {
+                    ride_id,
+                    ride: completedRide[0]
+                });
+            } catch (socketErr) {
+                console.error("Socket emit error (non-blocking):", socketErr.message);
+            }
+
             res.json({ success: true, message: "Ride completed successfully" });
         } catch (err) {
             console.error("Complete Ride Error:", err);
@@ -218,7 +287,7 @@ const rideController = {
         try {
             conn = await pool.getConnection();
 
-            const [rides] = await conn.query("SELECT Ride_Status, Driver_ID_Fk FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
+            const [rides] = await conn.query("SELECT Ride_Status, Driver_ID_Fk, User_ID_Fk FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
             if (rides.length === 0) {
                 return res.status(404).json({ success: false, message: "Ride not found" });
             }
@@ -238,6 +307,14 @@ const rideController = {
                 "UPDATE ride_history SET Ride_Status = 'Ongoing', Ride_Date = NOW() WHERE Ride_ID_Pk = ?",
                 [ride_id]
             );
+
+            // Notify rider that ride has started
+            try {
+                const io = getIO();
+                io.to(`user:${ride.User_ID_Fk || ''}`).emit("ride_started", { ride_id });
+            } catch (socketErr) {
+                console.error("Socket emit error (non-blocking):", socketErr.message);
+            }
 
             res.json({ success: true, message: "Ride started successfully" });
         } catch (err) {
@@ -293,6 +370,19 @@ const rideController = {
                     ride_id
                 ]
             );
+
+            // Notify drivers about fare update
+            try {
+                const io = getIO();
+                const [updatedRide] = await conn.query("SELECT * FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
+                io.to(`vehicle:${ride.Vehicle_Type}`).emit("fare_updated", {
+                    ride_id,
+                    new_fare: fare,
+                    ride: updatedRide[0]
+                });
+            } catch (socketErr) {
+                console.error("Socket emit error (non-blocking):", socketErr.message);
+            }
 
             res.json({ success: true, message: "Ride fare updated successfully" });
         } catch (err) {

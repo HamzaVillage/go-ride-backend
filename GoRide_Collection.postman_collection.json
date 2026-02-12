@@ -584,6 +584,149 @@
                     "response": []
                 }
             ]
+        },
+        {
+            "name": "Address Management",
+            "item": [
+                {
+                    "name": "Add Address",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{auth_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"title\": \"Home\",\n    \"address\": \"123 Main Street, Gulshan-e-Iqbal\",\n    \"lat\": 24.9215,\n    \"lng\": 67.0975,\n    \"city\": \"Karachi\",\n    \"note\": \"Near the park\",\n    \"is_default\": true\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/address/add",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "address",
+                                "add"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Get All Addresses",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{auth_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/address/all",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "address",
+                                "all"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Get Address By ID",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{auth_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/address/1",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "address",
+                                "1"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Update Address",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{auth_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"title\": \"Office\",\n    \"address\": \"456 Business Ave, Clifton\",\n    \"lat\": 24.8130,\n    \"lng\": 67.0300,\n    \"city\": \"Karachi\",\n    \"note\": \"Building 5, Floor 3\",\n    \"is_default\": false\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/address/1",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "address",
+                                "1"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Delete Address",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{auth_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/address/1",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "address",
+                                "1"
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
         }
     ],
     "event": [
