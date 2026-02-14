@@ -44,8 +44,9 @@ const authController = {
         if (!phone_number) return res.status(400).json({ success: false, message: "Phone number is required" });
 
         try {
+            const normalizedPhone = phone_number.replace(/-/g, '');
             await cleanupOTPs(pool);
-            const otp = await sendSMS(phone_number);
+            const otp = await sendSMS(normalizedPhone);
             const otp_hash = await bcrypt.hash(otp, 10);
             const expires_at = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
@@ -54,7 +55,7 @@ const authController = {
                 conn = await pool.getConnection();
                 await conn.query(
                     "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?",
-                    [phone_number, otp_hash, expires_at, 'general', otp_hash, expires_at, 'general']
+                    [normalizedPhone, otp_hash, expires_at, 'general', otp_hash, expires_at, 'general']
                 );
 
                 res.json({ success: true, message: "OTP sent successfully" });
@@ -74,14 +75,15 @@ const authController = {
         let conn;
         try {
             conn = await pool.getConnection();
-            const [rows] = await conn.query("SELECT * FROM otp_verifications WHERE phone_number = ? AND verified = 0 AND expires_at > NOW()", [phone_number]);
+            const normalizedPhone = phone_number.replace(/-/g, '');
+            const [rows] = await conn.query("SELECT * FROM otp_verifications WHERE phone_number = ? AND verified = 0 AND expires_at > NOW()", [normalizedPhone]);
 
             if (rows.length === 0) return res.status(400).json({ success: false, message: "Invalid or expired OTP" });
 
             const otpData = rows[0];
             const valid = await bcrypt.compare(otp, otpData.otp_hash);
             if (!valid) {
-                await conn.query("UPDATE otp_verifications SET attempts = attempts + 1 WHERE phone_number = ?", [phone_number]);
+                await conn.query("UPDATE otp_verifications SET attempts = attempts + 1 WHERE phone_number = ?", [normalizedPhone]);
                 return res.status(400).json({ success: false, message: "Invalid OTP" });
             }
 
@@ -96,25 +98,15 @@ const authController = {
                 const [userResult] = await conn.query(
                     `INSERT INTO users (User_Name, Email, Password, Mobile, Role, Unique_ID) 
                      VALUES (?, ?, ?, ?, ?, ?)`,
-                    [payload.full_name, payload.email, payload.password, phone_number, 'rider', uniqueId]
+                    [payload.full_name, payload.email, payload.password, normalizedPhone, 'rider', uniqueId]
                 );
 
                 const userId = userResult.insertId;
 
-                // Create Driver entry (pending) - REMOVED for customer app
-                /*
-                const driverCode = 'DRV' + Math.floor(1000 + Math.random() * 9000);
-                await conn.query(
-                    `INSERT INTO drivers (driver_code, full_name, phone, email, status)
-                     VALUES (?, ?, ?, ?, ?)`,
-                    [driverCode, payload.full_name, phone_number, payload.email, 'pending']
-                );
-                */
-
                 const [newUserRows] = await conn.query("SELECT * FROM users WHERE User_ID_Pk = ?", [userId]);
                 user = newUserRows[0];
             } else {
-                const [userRows] = await conn.query("SELECT * FROM users WHERE Mobile = ?", [phone_number]);
+                const [userRows] = await conn.query("SELECT * FROM users WHERE REPLACE(Mobile, '-', '') = ?", [normalizedPhone]);
                 if (userRows.length === 0) {
                     await conn.rollback();
                     return res.status(404).json({ success: false, message: "User not found" });
@@ -123,7 +115,7 @@ const authController = {
             }
 
             // Cleanup OTP
-            await conn.query("DELETE FROM otp_verifications WHERE phone_number = ?", [phone_number]);
+            await conn.query("DELETE FROM otp_verifications WHERE phone_number = ?", [normalizedPhone]);
             await conn.commit();
 
             const token = jwt.sign(
@@ -177,15 +169,16 @@ const authController = {
         let conn;
         try {
             conn = await pool.getConnection();
+            const normalizedPhone = phone.replace(/-/g, '');
 
             // Check if user already exists
-            const [existing] = await conn.query("SELECT * FROM users WHERE Mobile = ? OR Email = ?", [phone, email]);
+            const [existing] = await conn.query("SELECT * FROM users WHERE REPLACE(Mobile, '-', '') = ? OR Email = ?", [normalizedPhone, email]);
             if (existing.length > 0) {
                 return res.status(400).json({ success: false, message: "User already exists with this phone or email" });
             }
 
             await cleanupOTPs(pool);
-            const otp = await sendSMS(phone);
+            const otp = await sendSMS(normalizedPhone);
             const otp_hash = await bcrypt.hash(otp, 10);
             const hashedPassword = await bcrypt.hash(password, 10);
             const expires_at = new Date(Date.now() + 10 * 60 * 1000);
@@ -194,7 +187,7 @@ const authController = {
 
             await conn.query(
                 "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose, payload) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?, payload = ?",
-                [phone, otp_hash, expires_at, 'register', payload, otp_hash, expires_at, 'register', payload]
+                [normalizedPhone, otp_hash, expires_at, 'register', payload, otp_hash, expires_at, 'register', payload]
             );
 
             res.status(200).json({
@@ -217,7 +210,8 @@ const authController = {
         let conn;
         try {
             conn = await pool.getConnection();
-            const [rows] = await conn.query("SELECT * FROM users WHERE Mobile = ?", [phone]);
+            const normalizedPhone = phone.replace(/-/g, '');
+            const [rows] = await conn.query("SELECT * FROM users WHERE REPLACE(Mobile, '-', '') = ?", [normalizedPhone]);
             if (rows.length === 0) return res.status(401).json({ success: false, message: "Invalid credentials" });
 
             const user = rows[0];
@@ -226,13 +220,13 @@ const authController = {
             if (!valid) return res.status(401).json({ success: false, message: "Invalid credentials" });
 
             await cleanupOTPs(pool);
-            const otp = await sendSMS(phone);
+            const otp = await sendSMS(normalizedPhone);
             const otp_hash = await bcrypt.hash(otp, 10);
             const expires_at = new Date(Date.now() + 10 * 60 * 1000);
 
             await conn.query(
                 "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?",
-                [phone, otp_hash, expires_at, 'login', otp_hash, expires_at, 'login']
+                [normalizedPhone, otp_hash, expires_at, 'login', otp_hash, expires_at, 'login']
             );
 
             res.json({
@@ -353,7 +347,7 @@ const authController = {
             }
 
             // Cleanup OTP
-            await conn.query("DELETE FROM otp_verifications WHERE phone_number = ? AND purpose = 'driver_login'", [phone]);
+            await conn.query("DELETE FROM otp_verifications WHERE phone_number = ? AND purpose = 'driver_login'", [normalizedPhone]);
 
             const token = jwt.sign(
                 { userId, role: 'driver', phone: phone },
@@ -388,17 +382,18 @@ const authController = {
         let conn;
         try {
             conn = await pool.getConnection();
-            const [rows] = await conn.query("SELECT User_ID_Pk FROM users WHERE Mobile = ?", [phone]);
+            const normalizedPhone = phone.replace(/-/g, '');
+            const [rows] = await conn.query("SELECT User_ID_Pk FROM users WHERE REPLACE(Mobile, '-', '') = ?", [normalizedPhone]);
             if (rows.length === 0) return res.status(404).json({ success: false, message: "User not found" });
 
             await cleanupOTPs(pool);
-            const otp = await sendSMS(phone);
+            const otp = await sendSMS(normalizedPhone);
             const otp_hash = await bcrypt.hash(otp, 10);
             const expires_at = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
             await conn.query(
                 "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?",
-                [phone, otp_hash, expires_at, 'forgot_password', otp_hash, expires_at, 'forgot_password']
+                [normalizedPhone, otp_hash, expires_at, 'forgot_password', otp_hash, expires_at, 'forgot_password']
             );
 
             res.json({ success: true, message: "Reset OTP sent successfully" });
@@ -424,9 +419,10 @@ const authController = {
         let conn;
         try {
             conn = await pool.getConnection();
+            const normalizedPhone = phone.replace(/-/g, '');
             const [rows] = await conn.query(
                 "SELECT * FROM otp_verifications WHERE phone_number = ? AND purpose = 'forgot_password' AND verified = 0 AND expires_at > NOW()",
-                [phone]
+                [normalizedPhone]
             );
 
             if (rows.length === 0) return res.status(400).json({ success: false, message: "Invalid or expired OTP" });
@@ -434,7 +430,7 @@ const authController = {
             const otpData = rows[0];
             const valid = await bcrypt.compare(otp, otpData.otp_hash);
             if (!valid) {
-                await conn.query("UPDATE otp_verifications SET attempts = attempts + 1 WHERE phone_number = ?", [phone]);
+                await conn.query("UPDATE otp_verifications SET attempts = attempts + 1 WHERE phone_number = ?", [normalizedPhone]);
                 return res.status(400).json({ success: false, message: "Invalid OTP" });
             }
 
@@ -442,9 +438,9 @@ const authController = {
 
             await conn.beginTransaction();
             // Update password
-            await conn.query("UPDATE users SET Password = ? WHERE Mobile = ?", [hashedPassword, phone]);
+            await conn.query("UPDATE users SET Password = ? WHERE REPLACE(Mobile, '-', '') = ?", [hashedPassword, normalizedPhone]);
             // Delete OTP
-            await conn.query("DELETE FROM otp_verifications WHERE phone_number = ? AND purpose = 'forgot_password'", [phone]);
+            await conn.query("DELETE FROM otp_verifications WHERE phone_number = ? AND purpose = 'forgot_password'", [normalizedPhone]);
             await conn.commit();
 
             res.json({ success: true, message: "Password reset successfully" });
