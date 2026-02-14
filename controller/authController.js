@@ -101,13 +101,15 @@ const authController = {
 
                 const userId = userResult.insertId;
 
-                // Create Driver entry (pending)
+                // Create Driver entry (pending) - REMOVED for customer app
+                /*
                 const driverCode = 'DRV' + Math.floor(1000 + Math.random() * 9000);
                 await conn.query(
                     `INSERT INTO drivers (driver_code, full_name, phone, email, status)
                      VALUES (?, ?, ?, ?, ?)`,
                     [driverCode, payload.full_name, phone_number, payload.email, 'pending']
                 );
+                */
 
                 const [newUserRows] = await conn.query("SELECT * FROM users WHERE User_ID_Pk = ?", [userId]);
                 user = newUserRows[0];
@@ -249,6 +251,134 @@ const authController = {
         // Since we use JWT, logout is usually handled on the client by deleting the token.
         // But we can send a success response.
         res.json({ success: true, message: "Logged out successfully" });
+    },
+
+    driverSendOtp: async (req, res) => {
+        const { phone } = req.body;
+        if (!phone) return res.status(400).json({ success: false, message: "Phone number is required" });
+
+        let conn;
+        try {
+            conn = await pool.getConnection();
+            // Normalize input phone by removing any dashes
+            const normalizedPhone = phone.replace(/-/g, '');
+
+            // Check if driver exists in drivers table (comparison ignoring dashes in DB)
+            const [driverRows] = await conn.query(
+                "SELECT * FROM drivers WHERE REPLACE(phone, '-', '') = ?",
+                [normalizedPhone]
+            );
+            if (driverRows.length === 0) {
+                return res.status(404).json({ success: false, message: "Driver not registered. Please contact your franchise." });
+            }
+
+            const driver = driverRows[0];
+            if (driver.status === 'blocked' || driver.status === 'inactive') {
+                return res.status(403).json({ success: false, message: `Your account is ${driver.status}. Please contact support.` });
+            }
+
+            await cleanupOTPs(pool);
+            const otp = await sendSMS(normalizedPhone);
+            const otp_hash = await bcrypt.hash(otp, 10);
+            const expires_at = new Date(Date.now() + 10 * 60 * 1000);
+
+            await conn.query(
+                "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?",
+                [normalizedPhone, otp_hash, expires_at, 'driver_login', otp_hash, expires_at, 'driver_login']
+            );
+
+            console.log(`📱 Debug Driver OTP for ${phone}: ${otp}`);
+            res.json({ success: true, message: "OTP sent successfully" });
+        } catch (err) {
+            console.error("Driver Send OTP Error:", err);
+            res.status(500).json({ success: false, message: "Failed to send OTP", error: err.message });
+        } finally {
+            if (conn) conn.release();
+        }
+    },
+
+    driverVerifyOtp: async (req, res) => {
+        const { phone, otp } = req.body;
+        if (!phone || !otp) return res.status(400).json({ success: false, message: "Phone and OTP are required" });
+
+        let conn;
+        try {
+            conn = await pool.getConnection();
+            // Normalize input phone by removing any dashes
+            const normalizedPhone = phone.replace(/-/g, '');
+
+            // Verify OTP
+            const [otpRows] = await conn.query(
+                "SELECT * FROM otp_verifications WHERE phone_number = ? AND purpose = 'driver_login' AND verified = 0 AND expires_at > NOW()",
+                [normalizedPhone]
+            );
+
+            if (otpRows.length === 0) {
+                return res.status(400).json({ success: false, message: "Invalid or expired OTP" });
+            }
+
+            const otpData = otpRows[0];
+            const isMatch = await bcrypt.compare(otp, otpData.otp_hash);
+
+            if (!isMatch) {
+                await conn.query("UPDATE otp_verifications SET attempts = attempts + 1 WHERE phone_number = ?", [normalizedPhone]);
+                return res.status(400).json({ success: false, message: "Invalid OTP" });
+            }
+
+            // Get driver details (normalized comparison)
+            const [driverRows] = await conn.query(
+                "SELECT * FROM drivers WHERE REPLACE(phone, '-', '') = ?",
+                [normalizedPhone]
+            );
+            if (driverRows.length === 0) return res.status(404).json({ success: false, message: "Driver details not found" });
+
+            const driver = driverRows[0];
+
+            // Optional: Ensure user exists in users table for consistent JWT/Auth
+            const [userRows] = await conn.query(
+                "SELECT * FROM users WHERE REPLACE(Mobile, '-', '') = ? AND Role = 'driver'",
+                [normalizedPhone]
+            );
+            let userId;
+            if (userRows.length === 0) {
+                // Create user if not exists
+                const uniqueId = crypto.randomBytes(16).toString('hex');
+                const [userResult] = await conn.query(
+                    "INSERT INTO users (User_Name, Email, Mobile, Role, Unique_ID) VALUES (?, ?, ?, ?, ?)",
+                    [driver.full_name, driver.email || '', phone, 'driver', uniqueId]
+                );
+                userId = userResult.insertId;
+            } else {
+                userId = userRows[0].User_ID_Pk;
+            }
+
+            // Cleanup OTP
+            await conn.query("DELETE FROM otp_verifications WHERE phone_number = ? AND purpose = 'driver_login'", [phone]);
+
+            const token = jwt.sign(
+                { userId, role: 'driver', phone: phone },
+                process.env.JWT_SECRET || 'your_fallback_secret',
+                { expiresIn: '30d' }
+            );
+
+            res.json({
+                success: true,
+                message: "Driver logged in successfully",
+                token,
+                user: {
+                    id: userId,
+                    name: driver.full_name,
+                    phone: driver.phone,
+                    role: 'driver'
+                },
+                driver_profile: driver
+            });
+        } catch (err) {
+            console.error("Driver Verify OTP Error:", err);
+            res.status(500).json({ success: false, message: "Verification failed", error: err.message });
+        } finally {
+            if (conn) conn.release();
+        }
     },
 
     forgotPassword: async (req, res) => {
