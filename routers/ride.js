@@ -24,6 +24,9 @@ router.post('/complete', authMiddleware, rideController.completeRide);
 // Update ride fare (Rider)
 router.post('/update-fare', authMiddleware, rideController.updateFare);
 
+// Get recent addresses (User)
+router.get('/recent-addresses', authMiddleware, rideController.getRecentAddresses);
+
 // Get ride history (User/Driver)
 router.get('/history', authMiddleware, rideController.getRideHistory);
 

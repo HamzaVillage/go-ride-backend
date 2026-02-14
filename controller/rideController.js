@@ -433,6 +433,33 @@ const rideController = {
         } finally {
             if (conn) conn.release();
         }
+    },
+
+    getRecentAddresses: async (req, res) => {
+        const user = req.user;
+
+        let conn;
+        try {
+            conn = await pool.getConnection();
+
+            // Get unique drop-off locations from last 50 rides
+            const [rows] = await conn.query(
+                `SELECT DISTINCT Drop_Location as address, Drop_Lat as latitude, Drop_Lng as longitude 
+                 FROM ride_history 
+                 WHERE User_ID_Fk = ? 
+                 AND Ride_Status = 'Completed'
+                 ORDER BY End_Time DESC 
+                 LIMIT 10`,
+                [user.userId]
+            );
+
+            res.json({ success: true, count: rows.length, data: rows });
+        } catch (err) {
+            console.error("Get Recent Addresses Error:", err);
+            res.status(500).json({ success: false, message: "Error fetching recent addresses", error: err.message });
+        } finally {
+            if (conn) conn.release();
+        }
     }
 };
 
