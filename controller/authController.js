@@ -224,6 +224,8 @@ const authController = {
             const otp_hash = await bcrypt.hash(otp, 10);
             const expires_at = new Date(Date.now() + 10 * 60 * 1000);
 
+            console.log("OTP:", otp);
+
             await conn.query(
                 "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?",
                 [normalizedPhone, otp_hash, expires_at, 'login', otp_hash, expires_at, 'login']

@@ -327,7 +327,7 @@
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n    \"user_id\": 1,\n    \"pickup_location\": \"Jinnah International Airport\",\n    \"drop_location\": \"Clifton Beach\",\n    \"pickup_lat\": 24.9065,\n    \"pickup_lng\": 67.1607,\n    \"drop_lat\": 24.8125,\n    \"drop_lng\": 67.0286,\n    \"distance\": 18.50,\n    \"duration\": 35,\n    \"fare\": 850.00,\n    \"vehicle_type\": \"Mini\",\n    \"payment_method\": \"Easypaisa\"\n}",
+                            "raw": "{\n    \"user_id\": 1,\n    \"pickup_location\": \"Jinnah International Airport\",\n    \"drop_location\": \"Clifton Beach\",\n    \"pickup_lat\": 24.9065,\n    \"pickup_lng\": 67.1607,\n    \"drop_lat\": 24.8125,\n    \"drop_lng\": 67.0286,\n    \"distance\": 18.50,\n    \"duration\": 35,\n    \"fare\": 850.00,\n    \"base_fare\": 150.00,\n    \"per_km_rate\": 45.00,\n    \"night_charge\": 0.00,\n    \"peak_hour_surcharge\": 100.00,\n    \"total_waiting_time\": 5,\n    \"waiting_charges\": 15.00,\n    \"is_peak_hour\": true,\n    \"is_night_ride\": false,\n    \"vehicle_type\": \"Mini\",\n    \"payment_method\": \"Easypaisa\"\n}",
                             "options": {
                                 "raw": {
                                     "language": "json"
@@ -580,6 +580,31 @@
                             ]
                         },
                         "description": "Returns ride history for the logged-in user or driver. Drivers get rides assigned to them, users get rides requested by them."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Get Recent Addresses (User)",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{auth_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/ride/recent-addresses",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "ride",
+                                "recent-addresses"
+                            ]
+                        },
+                        "description": "Returns unique recent drop-off locations for the logged-in rider."
                     },
                     "response": []
                 }
