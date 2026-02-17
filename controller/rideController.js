@@ -18,6 +18,21 @@ const rideController = {
         let conn;
         try {
             conn = await pool.getConnection();
+
+            // Check if user already has an active ride
+            const [activeRides] = await conn.query(
+                "SELECT * FROM ride_history WHERE User_ID_Fk = ? AND Ride_Status IN ('Requested', 'Accepted', 'Arrived', 'Ongoing')",
+                [user_id]
+            );
+
+            if (activeRides.length > 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: "You already have an active ride. Please cancel or complete it before creating a new one.",
+                    activeRideId: activeRides[0].Ride_ID_Pk
+                });
+            }
+
             const [result] = await conn.query(
                 `INSERT INTO ride_history (
                     User_ID_Fk, Pickup_Location, Drop_Location, Pickup_Lat, Pickup_Lng, 
@@ -73,20 +88,18 @@ const rideController = {
 
             // 1. Fetch driver's vehicle type
             const [driverRows] = await conn.query("SELECT vehicle_type FROM drivers WHERE id = ?", [driver_id]);
-            if (driverRows.length === 0) {
-                return res.status(404).json({ success: false, message: "Driver not found" });
-            }
-            const driverVehicleType = driverRows[0].vehicle_type;
+            const driverVehicleType = req.query.vehicle_type || (driverRows.length > 0 ? driverRows[0].vehicle_type : 'Mini');
 
-            // 2. Haversine formula to find rides within 1km where Driver_ID_Fk IS NULL and Vehicle_Type matches
+            // 2. Haversine formula to find rides within 20km where Driver_ID_Fk IS NULL and Vehicle_Type matches
             const query = `
-                SELECT *, 
+                SELECT r.*, u.User_Name as rider_name,
                 (6371 * acos(cos(radians(?)) * cos(radians(Pickup_Lat)) * cos(radians(Pickup_Lng) - radians(?)) + sin(radians(?)) * sin(radians(Pickup_Lat)))) AS distance_km
-                FROM ride_history
-                WHERE Driver_ID_Fk IS NULL 
-                AND Ride_Status = 'Requested'
-                AND Vehicle_Type = ?
-                HAVING distance_km < 1
+                FROM ride_history r
+                LEFT JOIN users u ON r.User_ID_Fk = u.User_ID_Pk
+                WHERE r.Driver_ID_Fk IS NULL 
+                AND r.Ride_Status = 'Requested'
+                AND r.Vehicle_Type = ?
+                HAVING distance_km < 20
                 ORDER BY distance_km ASC
             `;
 
@@ -138,8 +151,17 @@ const rideController = {
                 [driver_id, ride_id]
             );
 
-            // Fetch the full ride to get the rider's user ID and notify them
-            const [updatedRide] = await conn.query("SELECT * FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
+            // Fetch the full ride along with driver details to notify the rider
+            const [updatedRide] = await conn.query(
+                `SELECT r.*, d.full_name as driver_name, d.phone as driver_phone, 
+                d.vehicle_type as driver_vehicle_type, d.vehicle_model, d.vehicle_number, 
+                d.vehicle_color, d.photo_path as driver_photo, d.Rating as driver_rating
+                FROM ride_history r
+                LEFT JOIN drivers d ON r.Driver_ID_Fk = d.id
+                WHERE r.Ride_ID_Pk = ?`,
+                [ride_id]
+            );
+
             try {
                 const io = getIO();
                 // Notify the rider that their ride was accepted
@@ -156,7 +178,11 @@ const rideController = {
                 console.error("Socket emit error (non-blocking):", socketErr.message);
             }
 
-            res.json({ success: true, message: "Ride accepted successfully" });
+            res.json({
+                success: true,
+                message: "Ride accepted successfully",
+                ride: updatedRide[0]
+            });
         } catch (err) {
             console.error("Accept Ride Error:", err);
             res.status(500).json({ success: false, message: "Error accepting ride", error: err.message });
@@ -201,9 +227,11 @@ const rideController = {
                 if (cancelled_by === 'Driver' && ride.User_ID_Fk) {
                     // Driver cancelled → notify rider
                     io.to(`user:${ride.User_ID_Fk}`).emit("ride_cancelled", cancelPayload);
+                    io.to(`ride:${ride_id}`).emit("ride_cancelled", cancelPayload);
                 } else if (cancelled_by === 'User') {
                     if (ride.Driver_ID_Fk) {
-                        // Rider cancelled after acceptance → notify driver via phone lookup
+                        // Rider cancelled after acceptance → notify driver via room and direct message
+                        io.to(`ride:${ride_id}`).emit("ride_cancelled", cancelPayload);
                         const [driverRows] = await conn.query("SELECT phone FROM drivers WHERE id = ?", [ride.Driver_ID_Fk]);
                         if (driverRows.length > 0) {
                             const [userRows] = await conn.query("SELECT User_ID_Pk FROM users WHERE Mobile = ?", [driverRows[0].phone]);
@@ -262,6 +290,10 @@ const rideController = {
                     ride_id,
                     ride: completedRide[0]
                 });
+                io.to(`ride:${ride_id}`).emit("ride_completed", {
+                    ride_id,
+                    ride: completedRide[0]
+                });
             } catch (socketErr) {
                 console.error("Socket emit error (non-blocking):", socketErr.message);
             }
@@ -293,8 +325,8 @@ const rideController = {
             }
 
             const ride = rides[0];
-            if (ride.Ride_Status !== 'Accepted') {
-                return res.status(400).json({ success: false, message: `Ride must be 'Accepted' to start (Current: ${ride.Ride_Status})` });
+            if (ride.Ride_Status !== 'Arrived') {
+                return res.status(400).json({ success: false, message: `Ride must be 'Arrived' to start (Current: ${ride.Ride_Status})` });
             }
 
             // Verify it's the right driver
@@ -312,6 +344,7 @@ const rideController = {
             try {
                 const io = getIO();
                 io.to(`user:${ride.User_ID_Fk || ''}`).emit("ride_started", { ride_id });
+                io.to(`ride:${ride_id}`).emit("ride_started", { ride_id });
             } catch (socketErr) {
                 console.error("Socket emit error (non-blocking):", socketErr.message);
             }
@@ -320,6 +353,56 @@ const rideController = {
         } catch (err) {
             console.error("Start Ride Error:", err);
             res.status(500).json({ success: false, message: "Error starting ride", error: err.message });
+        } finally {
+            if (conn) conn.release();
+        }
+    },
+
+    markArrived: async (req, res) => {
+        const { ride_id } = req.body;
+        const user = req.user;
+
+        if (!ride_id) {
+            return res.status(400).json({ success: false, message: "Ride ID is required" });
+        }
+
+        let conn;
+        try {
+            conn = await pool.getConnection();
+
+            const [rides] = await conn.query("SELECT Ride_Status, Driver_ID_Fk, User_ID_Fk FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
+            if (rides.length === 0) {
+                return res.status(404).json({ success: false, message: "Ride not found" });
+            }
+
+            const ride = rides[0];
+            if (ride.Ride_Status !== 'Accepted') {
+                return res.status(400).json({ success: false, message: "Ride must be 'Accepted' to mark as arrived" });
+            }
+
+            // Simple check for driver - in production we'd verify by ID properly
+            if (ride.Driver_ID_Fk === null) {
+                return res.status(403).json({ success: false, message: "No driver assigned to this ride" });
+            }
+
+            await conn.query(
+                "UPDATE ride_history SET Ride_Status = 'Arrived' WHERE Ride_ID_Pk = ?",
+                [ride_id]
+            );
+
+            // Notify rider
+            try {
+                const io = getIO();
+                io.to(`user:${ride.User_ID_Fk}`).emit("ride_arrived", { ride_id });
+                io.to(`ride:${ride_id}`).emit("ride_arrived", { ride_id });
+            } catch (socketErr) {
+                console.error("Socket emit error:", socketErr.message);
+            }
+
+            res.json({ success: true, message: "Marked as arrived" });
+        } catch (err) {
+            console.error("Mark Arrived Error:", err);
+            res.status(500).json({ success: false, message: "Error marking arrival", error: err.message });
         } finally {
             if (conn) conn.release();
         }
@@ -418,8 +501,14 @@ const rideController = {
             }
 
             if (status) {
-                query += "AND Ride_Status = ? ";
-                queryParams.push(status);
+                if (status.includes(',')) {
+                    const statusArray = status.split(',');
+                    query += `AND Ride_Status IN (${statusArray.map(() => '?').join(',')}) `;
+                    queryParams.push(...statusArray);
+                } else {
+                    query += "AND Ride_Status = ? ";
+                    queryParams.push(status);
+                }
             }
 
             query += "ORDER BY CreatedAt DESC";

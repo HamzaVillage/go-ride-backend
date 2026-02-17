@@ -81,9 +81,38 @@ function initSocket(server) {
 
         // ── Driver updates location ──
         socket.on("driver:location_update", (data) => {
+            const { lat, lng, rideId } = data || {};
             if (socket.driverInfo) {
-                socket.driverInfo.lat = data.lat;
-                socket.driverInfo.lng = data.lng;
+                socket.driverInfo.lat = lat;
+                socket.driverInfo.lng = lng;
+            }
+
+            // If the driver is on an active ride, broadcast to the ride room
+            if (rideId) {
+                socket.to(`ride:${rideId}`).emit("driver:location_changed", {
+                    rideId,
+                    lat,
+                    lng,
+                    timestamp: new Date()
+                });
+            }
+        });
+
+        // ── Join a specific ride room (For both Driver & Rider) ──
+        socket.on("ride:join", (data) => {
+            const { rideId } = data || {};
+            if (rideId) {
+                socket.join(`ride:${rideId}`);
+                console.log(`📍 User ${userId} joined room ride:${rideId}`);
+            }
+        });
+
+        // ── Leave a specific ride room ──
+        socket.on("ride:leave", (data) => {
+            const { rideId } = data || {};
+            if (rideId) {
+                socket.leave(`ride:${rideId}`);
+                console.log(`📍 User ${userId} left room ride:${rideId}`);
             }
         });
 

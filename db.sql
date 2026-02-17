@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: localhost
--- Generation Time: Feb 14, 2026 at 08:20 AM
+-- Generation Time: Feb 17, 2026 at 03:52 PM
 -- Server version: 10.5.29-MariaDB
 -- PHP Version: 8.5.1
 
@@ -63,8 +63,8 @@ INSERT INTO `drivers` (`id`, `driver_code`, `full_name`, `father_name`, `cnic`, 
 (2, 'DRV002', 'Usman Khan', 'Khalid Khan', '35202-7654321-2', NULL, NULL, '1981-02-11', '0312-9876543', '1riaz.zaheer@gmail.com', 'Sector F-10/4', 'Islamabad', 'Bike', '', 'XYZ-789', '', NULL, NULL, NULL, NULL, NULL, NULL, 'pending', '2024-02-01', '$2y$12$yu6v89LvLViII6XNUDHEXeim/VYnRZkr2hASK/xlgqvAECqtgDWpy', '2025-12-16 17:42:43', '2026-02-11 15:11:39', 0, 0, 1),
 (4, 'DRV004', 'Bilal Raza', 'Raza Ahmed', '34501-2345678-4', NULL, NULL, '1970-02-11', '0345-2345678', '', 'Cantt Area', 'Rawalpindi', 'Auto', '', 'RWP-789', '', NULL, NULL, NULL, NULL, NULL, NULL, 'active', '2024-01-25', NULL, '2025-12-16 17:42:43', '2026-02-11 15:11:55', 0, 0, 1),
 (5, 'DRV005', 'Ayesha Noor', 'Noor Muhammad', '41602-3456789-5', NULL, NULL, '2026-02-11', '0301-3456789', '', 'North Nazimabad', 'Karachi', 'Bike', '', 'KHI-123', '', 'uploads/driver_photo_1770817626_698c885a997b7.jpeg', NULL, NULL, NULL, NULL, NULL, 'blocked', '2024-02-10', NULL, '2025-12-16 17:42:43', '2026-02-11 15:12:12', 0, 0, 1),
-(6, 'DRV4975', 'Riaz Zaheer', 'M Zaheer Uddin', '42000-0475551-9', '0308-2228873', '0308-2228873', '1972-06-20', '0308-2228873', 'riaz.zaheer@gmail.com', 'A-70, Sunny Heights, Block A-10, Gulshan e Iqbal,\r\nNear Eastern Toyota Motors', 'Karachi', 'AC', 'Mira', 'KIN-123', 'Blue', 'uploads/driver_photo_1765908936_6941a1c85e534.jpg', 'uploads/cnic_front_1765908533_6941a035e9649.jpeg', 'uploads/cnic_back_1765908533_6941a035e9716.jpeg', 'uploads/fingerprint_1765908533_6941a035e979e.jpeg', 'uploads/driving_license_1765909415_6941a3a7cc939.png', 'uploads/vehicle_document_1765909415_6941a3a7cca46.jpg', 'active', '2025-12-16', NULL, '2025-12-16 18:00:51', '2026-02-11 16:05:30', 0, 0, 1),
-(11, 'DRV4049', 'Farooq Nawaz', 'Muhammad Nawaz', '52000-0475551-9', NULL, NULL, '1972-06-21', '0330-2490487', 'farooqnawaz@gmail.com', 'A-70,', 'Karachi', 'Mini', 'Alto', 'KIN-786', 'White', 'uploads/driver_photo_1770806365_698c5c5dab6a6.jpeg', 'uploads/cnic_front_1770807173_698c5f85b7053.jpeg', 'uploads/cnic_back_1770807173_698c5f85b711c.jpeg', 'uploads/fingerprint_1770807173_698c5f85b7181.jpeg', 'uploads/driving_license_1770807173_698c5f85b71f9.jpeg', 'uploads/vehicle_document_1770807173_698c5f85b7254.jpeg', 'pending', '2026-02-10', '$2y$12$CC14PzRIiC6BkJav1MO8WeGC303llH.gpQRzsfiJPjNcbbyEzJSgC', '2026-02-11 07:19:28', '2026-02-11 15:10:27', NULL, 0, 1),
+(6, 'DRV4975', 'Riaz Zaheer', 'M Zaheer Uddin', '42000-0475551-9', '0308-2228873', '0308-2228873', '1972-06-20', '0308-2228873', 'riaz.zaheer@gmail.com', 'A-70, Sunny Heights, Block A-10, Gulshan e Iqbal,\r\nNear Eastern Toyota Motors', 'Karachi', 'AC', 'Mira', 'KIN-123', 'Blue', 'uploads/driver_photo_1765908936_6941a1c85e534.jpg', 'uploads/cnic_front_1765908533_6941a035e9649.jpeg', 'uploads/cnic_back_1765908533_6941a035e9716.jpeg', 'uploads/fingerprint_1765908533_6941a035e979e.jpeg', 'uploads/driving_license_1765909415_6941a3a7cc939.png', 'uploads/vehicle_document_1765909415_6941a3a7cca46.jpg', 'active', '2025-12-16', '$2b$10$Smgbu19sXD0dv8xyqStrh.MtoYupPzd0MxPXuC2bPZtDcRuNKnW7i', '2025-12-16 18:00:51', '2026-02-14 13:20:50', 0, 0, 1),
+(11, 'DRV4049', 'Farooq Nawaz', 'Muhammad Nawaz', '52000-0475551-9', NULL, NULL, '1972-06-21', '03048108664', 'farooqnawaz@gmail.com', 'A-70,', 'Karachi', 'Mini', 'Alto', 'KIN-786', 'White', 'uploads/driver_photo_1770806365_698c5c5dab6a6.jpeg', 'uploads/cnic_front_1770807173_698c5f85b7053.jpeg', 'uploads/cnic_back_1770807173_698c5f85b711c.jpeg', 'uploads/fingerprint_1770807173_698c5f85b7181.jpeg', 'uploads/driving_license_1770807173_698c5f85b71f9.jpeg', 'uploads/vehicle_document_1770807173_698c5f85b7254.jpeg', 'pending', '2026-02-10', '$2y$12$CC14PzRIiC6BkJav1MO8WeGC303llH.gpQRzsfiJPjNcbbyEzJSgC', '2026-02-11 07:19:28', '2026-02-14 14:59:31', NULL, 0, 1),
 (12, 'DRV6428', 'Adnan Zaheer', 'Zaheer Babar', '52001-0475551-9', '0987-098765', '0987-098765', '1979-02-11', '0308-2228879', 'riaz.zaheer@gmail.com', 'A-70, Sunny Heights, Block A-10, Gulshan e Iqbal,\r\nNear Eastern Toyota Motors', 'Karachi', 'AC', 'Alto', 'KIN-123', 'Blue', 'uploads/photo_1770825698_698ca7e27a0f7.avif', NULL, NULL, NULL, NULL, NULL, 'pending', '2026-02-11', NULL, '2026-02-11 16:01:38', '2026-02-11 16:01:38', NULL, 0, 1);
 
 -- --------------------------------------------------------
@@ -157,7 +157,10 @@ INSERT INTO `ride_history` (`Ride_ID_Pk`, `User_ID_Fk`, `Driver_ID_Fk`, `Pickup_
 (29, 1, 5, 'Jinnah International Airport', 'Clifton Beach', 24.90650000, 67.16070000, 24.81250000, 67.02860000, 18.50, 35, 910.00, NULL, NULL, NULL, NULL, NULL, NULL, 0, 0, 'Easypaisa', 'Mini', 'Accepted', NULL, NULL, '2026-02-09 06:12:41', '2026-02-09 06:12:41', NULL, '2026-02-09 01:12:42', '2026-02-09 01:55:05'),
 (30, 1, 5, 'Jinnah International Airport', 'Clifton Beach', 24.90650000, 67.16070000, 24.81250000, 67.02860000, 18.50, 35, 850.00, NULL, NULL, NULL, NULL, NULL, NULL, 0, 0, 'Easypaisa', 'bike', 'Accepted', NULL, NULL, '2026-02-11 12:26:05', '2026-02-11 12:26:05', NULL, '2026-02-11 07:26:05', '2026-02-11 07:28:04'),
 (31, 601, NULL, 'Jinnah International Airport', 'Clifton Beach', 24.90650000, 67.16070000, 24.81250000, 67.02860000, 18.50, 35, 850.00, NULL, NULL, NULL, NULL, NULL, NULL, 0, 0, 'Easypaisa', 'Mini', 'Requested', NULL, NULL, '2026-02-11 12:38:19', '2026-02-11 12:38:19', NULL, '2026-02-11 07:38:19', '2026-02-11 07:38:19'),
-(32, 601, 5, 'Jinnah International Airport', 'Clifton Beach', 24.90650000, 67.16070000, 24.81250000, 67.02860000, 18.50, 35, 850.00, NULL, NULL, NULL, NULL, NULL, NULL, 0, 0, 'Easypaisa', 'bike', 'Cancelled', 'User', 'Changed my mind or car trouble', '2026-02-11 12:39:08', '2026-02-11 12:39:08', NULL, '2026-02-11 07:39:08', '2026-02-11 07:47:57');
+(32, 601, 5, 'Jinnah International Airport', 'Clifton Beach', 24.90650000, 67.16070000, 24.81250000, 67.02860000, 18.50, 35, 850.00, NULL, NULL, NULL, NULL, NULL, NULL, 0, 0, 'Easypaisa', 'bike', 'Cancelled', 'User', 'Changed my mind or car trouble', '2026-02-11 12:39:08', '2026-02-11 12:39:08', NULL, '2026-02-11 07:39:08', '2026-02-11 07:47:57'),
+(33, 1, NULL, '280, Block H North Nazimabad Town, Karachi, Pakistan', 'Khatri Jamaat Khana Rd, Bhimpura Karachi, Pakistan', 24.93532500, 67.05002000, 24.86121990, 67.00278430, 11.56, 32, 620.00, 50.00, 35.00, 0.00, 53.70, 0, 0.00, 1, 0, 'Cash', 'Mini', 'Requested', NULL, NULL, '2026-02-15 11:34:07', '2026-02-15 11:34:07', NULL, '2026-02-15 06:34:07', '2026-02-15 06:34:07'),
+(34, 1, NULL, 'Plot SA 21/3, Karachi Administration Employees Housing Society Block 4 KAECHS, Karachi, Pakistan', '25FH+H2 Taiser Town, Karachi, Pakistan', 24.86157333, 67.08023333, 25.02392693, 67.17758657, 31.75, 45, 1520.00, 50.00, 35.00, 0.00, 133.31, 0, 0.00, 1, 0, 'Cash', 'Mini', 'Requested', NULL, NULL, '2026-02-17 20:07:17', '2026-02-17 20:07:17', NULL, '2026-02-17 15:07:17', '2026-02-17 15:07:17'),
+(35, 1, NULL, 'Plot SA 21/3, Karachi Administration Employees Housing Society Block 4 KAECHS, Karachi, Pakistan', '4 N N Mirza Rd, Dehli Mercantile Co-Operative Housing Society. Karachi Memon Society P.E.C.H.S., Karachi, Pakistan', 24.86157333, 67.08023333, 24.87156658, 67.07743691, 2.41, 6, 150.00, 50.00, 35.00, 0.00, 11.59, 0, 0.00, 1, 0, 'Cash', 'Mini', 'Requested', NULL, NULL, '2026-02-17 20:46:05', '2026-02-17 20:46:05', NULL, '2026-02-17 15:46:06', '2026-02-17 15:46:06');
 
 -- --------------------------------------------------------
 
@@ -256,13 +259,16 @@ INSERT INTO `users` (`User_ID_Pk`, `User_Name`, `Email`, `Role`, `New_Order_Tone
 (1, 'Riaz Zaheer', '1riaz.zaheer@gmail.com', 'CP Admin', '', '2024-06-23 14:59:51', 'Qmobile00!', 0, '0308-2228873', '', '', '', '', 'Sunny Heights', '', 'Karachi', 'Pakistan', 'images/profile/userprofile66215bcf7a8cb6.60976891.jpg', '5b8f9f5644cf6', '', 'CP Admin', '', 'riaz.zaheer@gmail.com', '2024-03-01 05:16:42', 1, 0, '', 'Verified', '', '', '', '', '', 0, 0, ''),
 (598, 'Kashif', 'admin@goride.com', 'Rider', NULL, '2026-02-02 23:05:19', 'abc123', NULL, '03082228871', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
 (600, 'John Doe', 'john@example.com', 'Rider', NULL, '2026-02-08 14:11:20', '$2b$10$PDwqUhP5H8OkT4ikhDZTjOZeTpA5y.iYSW0mnN1xNBv6QO687g1yO', NULL, '1234567890', NULL, NULL, NULL, '1234567890123', 'Main St', NULL, 'Islamabad', NULL, NULL, 'eaff8cbf2ff1ee5acc1018ea3a38b7bd', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
-(601, 'John Doe', 'syed06411@gmail.com', 'Rider', NULL, '2026-02-08 16:13:42', '$2b$10$C.leqbK4h3nXXKDGld1zQ.GE4RqQo7fK.C9SvOr2EbY1HHaTkvtTS', NULL, '03112032255', NULL, NULL, NULL, '1234567890123', 'Main St', NULL, 'Islamabad', NULL, NULL, '4e6800a327505debb29e7e372eb11207', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+(601, 'John Doe', 'syed06411@gmail.com', 'Rider', NULL, '2026-02-08 16:13:42', '$2b$10$Smgbu19sXD0dv8xyqStrh.MtoYupPzd0MxPXuC2bPZtDcRuNKnW7i', NULL, '03112032255', NULL, NULL, NULL, '1234567890123', 'Main St', NULL, 'Islamabad', NULL, NULL, '4e6800a327505debb29e7e372eb11207', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
 (602, 'Farooq Nawaz', 'farooqnawaz@gmail.com', 'Driver', NULL, '2026-02-11 07:19:28', NULL, NULL, '0330-2490487', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
 (603, 'Usman Khan', '1riaz.zaheer@gmail.com', 'Driver', NULL, '2026-02-11 11:42:49', NULL, NULL, '0312-9876543', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
 (604, 'Bilal Raza', '', 'Driver', NULL, '2026-02-11 11:44:46', NULL, NULL, '0345-2345678', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
 (605, 'Ayesha Noor', '', 'Driver', NULL, '2026-02-11 13:47:06', NULL, NULL, '0301-3456789', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
 (607, 'Ali Ahmed', '', 'Driver', NULL, '2026-02-11 15:00:16', NULL, NULL, '0300-1234567', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
-(608, 'Adnan Zaheer', 'riaz.zaheer@gmail.com', 'Driver', NULL, '2026-02-11 16:01:38', NULL, NULL, '0308-2228879', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+(608, 'Adnan Zaheer', 'riaz.zaheer@gmail.com', 'Driver', NULL, '2026-02-11 16:01:38', NULL, NULL, '0308-2228879', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+(612, 'Mian Muhammad Ramzan', 'test@example.com', 'rider', NULL, '2026-02-14 12:59:44', '$2b$10$Smgbu19sXD0dv8xyqStrh.MtoYupPzd0MxPXuC2bPZtDcRuNKnW7i', NULL, '03048108664', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '22bc91e73ddd47dde0f93f48da12970a', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+(613, 'Riaz Zaheer', 'riaz.zaheer@gmail.com', 'driver', NULL, '2026-02-14 13:30:17', NULL, NULL, '03082228873', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '7f861c6ebcfcb65cff8db0c1543003a6', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+(614, 'Farooq Nawaz', 'farooqnawaz@gmail.com', 'driver', NULL, '2026-02-14 15:01:10', NULL, NULL, '03048108664', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'a16a639832c96c51e68d30e8dc77a97b', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
 
 -- --------------------------------------------------------
 
@@ -283,6 +289,14 @@ CREATE TABLE `user_addresses` (
   `CreatedAt` timestamp NOT NULL DEFAULT current_timestamp(),
   `UpdatedAt` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
+
+--
+-- Dumping data for table `user_addresses`
+--
+
+INSERT INTO `user_addresses` (`Address_ID_Pk`, `User_ID_Fk`, `Title`, `Address`, `Lat`, `Lng`, `City`, `Note`, `Is_Default`, `CreatedAt`, `UpdatedAt`) VALUES
+(1, 612, 'Home ka address hay', 'V272+482, Muhammad Ali Alvi Rd, Shiddi Village, Karachi, Pakistan', 24.8628139, 67.0008005, NULL, '3048108664', 0, '2026-02-14 17:23:08', '2026-02-14 18:00:48'),
+(2, 601, 'Home', 'Khatri Jamaat Khana Rd, Bhimpura Karachi, Pakistan', 24.8612199, 67.0027843, NULL, '3112032255', 0, '2026-02-15 02:40:35', '2026-02-15 02:40:35');
 
 -- --------------------------------------------------------
 
@@ -518,19 +532,19 @@ ALTER TABLE `voucher_transactions`
 -- AUTO_INCREMENT for table `drivers`
 --
 ALTER TABLE `drivers`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=13;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=16;
 
 --
 -- AUTO_INCREMENT for table `otp_verifications`
 --
 ALTER TABLE `otp_verifications`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=14;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=39;
 
 --
 -- AUTO_INCREMENT for table `ride_history`
 --
 ALTER TABLE `ride_history`
-  MODIFY `Ride_ID_Pk` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=33;
+  MODIFY `Ride_ID_Pk` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=36;
 
 --
 -- AUTO_INCREMENT for table `sysconfigsetup`
@@ -542,13 +556,13 @@ ALTER TABLE `sysconfigsetup`
 -- AUTO_INCREMENT for table `users`
 --
 ALTER TABLE `users`
-  MODIFY `User_ID_Pk` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=609;
+  MODIFY `User_ID_Pk` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=615;
 
 --
 -- AUTO_INCREMENT for table `user_addresses`
 --
 ALTER TABLE `user_addresses`
-  MODIFY `Address_ID_Pk` int(11) NOT NULL AUTO_INCREMENT;
+  MODIFY `Address_ID_Pk` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
 --
 -- AUTO_INCREMENT for table `vehicle_fare_rate`

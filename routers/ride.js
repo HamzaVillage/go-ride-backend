@@ -15,6 +15,9 @@ router.post('/cancel', authMiddleware, rideController.cancelRide);
 // Accept a ride (Driver)
 router.post('/accept', authMiddleware, rideController.acceptRide);
 
+// Mark arrival at pickup (Driver)
+router.post('/mark-arrived', authMiddleware, rideController.markArrived);
+
 // Start a ride (Driver)
 router.post('/start', authMiddleware, rideController.startRide);
 
