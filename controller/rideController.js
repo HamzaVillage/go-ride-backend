@@ -4,12 +4,15 @@ const { getIO } = require('../socket/socketManager');
 const rideController = {
     createRide: async (req, res) => {
         const {
-            user_id, pickup_location, drop_location, pickup_lat, pickup_lng,
+            pickup_location, drop_location, pickup_lat, pickup_lng,
             drop_lat, drop_lng, distance, duration, fare, base_fare,
             per_km_rate, night_charge, peak_hour_surcharge, total_waiting_time,
             waiting_charges, is_peak_hour, is_night_ride, payment_method,
             vehicle_type, ride_date, start_time
         } = req.body;
+
+        // Always use the authenticated user's ID from JWT - never trust the body
+        const user_id = req.user.userId;
 
         if (!user_id || !pickup_location || !drop_location || !pickup_lat || !pickup_lng) {
             return res.status(400).json({ success: false, message: "Missing required fields for ride creation" });
@@ -19,9 +22,8 @@ const rideController = {
         try {
             conn = await pool.getConnection();
 
-            // Check if user already has an active ride
             const [activeRides] = await conn.query(
-                "SELECT * FROM ride_history WHERE User_ID_Fk = ? AND Ride_Status IN ('Requested', 'Accepted', 'Arrived', 'Ongoing')",
+                "SELECT * FROM ride_history WHERE User_ID_Fk = ? AND Ride_Status IN ('Requested', 'Accepted', 'Arrived', 'Started', 'Ongoing')",
                 [user_id]
             );
 
@@ -50,10 +52,15 @@ const rideController = {
                 ]
             );
 
-            // Emit socket event to drivers with matching vehicle type
             try {
                 const io = getIO();
-                const [newRide] = await conn.query("SELECT * FROM ride_history WHERE Ride_ID_Pk = ?", [result.insertId]);
+                const [newRide] = await conn.query(
+                    `SELECT r.*, u.User_Name as rider_name 
+                     FROM ride_history r 
+                     LEFT JOIN users u ON r.User_ID_Fk = u.User_ID_Pk 
+                     WHERE r.Ride_ID_Pk = ?`,
+                    [result.insertId]
+                );
                 io.to(`vehicle:${vehicle_type}`).emit("new_ride_request", {
                     ride_id: result.insertId,
                     ride: newRide[0]
@@ -76,21 +83,24 @@ const rideController = {
     },
 
     getNearbyRides: async (req, res) => {
-        const { driver_lat, driver_lng, driver_id } = req.query;
+        const { driver_lat, driver_lng, vehicle_type } = req.query;
+        const user = req.user;
 
-        if (!driver_lat || !driver_lng || !driver_id) {
-            return res.status(400).json({ success: false, message: "Driver location (lat/lng) and Driver ID are required" });
+        if (!driver_lat || !driver_lng) {
+            return res.status(400).json({ success: false, message: "Driver location (lat/lng) is required" });
         }
 
         let conn;
         try {
             conn = await pool.getConnection();
 
-            // 1. Fetch driver's vehicle type
-            const [driverRows] = await conn.query("SELECT vehicle_type FROM drivers WHERE id = ?", [driver_id]);
-            const driverVehicleType = req.query.vehicle_type || (driverRows.length > 0 ? driverRows[0].vehicle_type : 'Mini');
+            // Derive driver info from JWT for security
+            const [driverRows] = await conn.query(
+                "SELECT id, vehicle_type FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                [user.phone]
+            );
+            const driverVehicleType = vehicle_type || (driverRows.length > 0 ? driverRows[0].vehicle_type : 'Mini');
 
-            // 2. Haversine formula to find rides within 20km where Driver_ID_Fk IS NULL and Vehicle_Type matches
             const query = `
                 SELECT r.*, u.User_Name as rider_name,
                 (6371 * acos(cos(radians(?)) * cos(radians(Pickup_Lat)) * cos(radians(Pickup_Lng) - radians(?)) + sin(radians(?)) * sin(radians(Pickup_Lat)))) AS distance_km
@@ -120,17 +130,32 @@ const rideController = {
     },
 
     acceptRide: async (req, res) => {
-        const { ride_id, driver_id } = req.body;
+        const { ride_id } = req.body;
+        const user = req.user;
 
-        if (!ride_id || !driver_id) {
-            return res.status(400).json({ success: false, message: "Ride ID and Driver ID are required" });
+        if (!ride_id) {
+            return res.status(400).json({ success: false, message: "Ride ID is required" });
+        }
+
+        const isDriver = user.role && String(user.role).toLowerCase() === 'driver';
+        if (!isDriver) {
+            return res.status(403).json({ success: false, message: "Only drivers can accept rides" });
         }
 
         let conn;
         try {
             conn = await pool.getConnection();
 
-            // 1. Validate that the ride exists and is still in 'Requested' status
+            // Derive driver_id from JWT phone → drivers table (never trust client)
+            const [driverRows] = await conn.query(
+                "SELECT id, full_name, vehicle_type FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                [user.phone]
+            );
+            if (driverRows.length === 0) {
+                return res.status(404).json({ success: false, message: "Driver profile not found. Please contact support." });
+            }
+            const driver_id = driverRows[0].id;
+
             const [rides] = await conn.query(
                 "SELECT Ride_Status, Driver_ID_Fk FROM ride_history WHERE Ride_ID_Pk = ?",
                 [ride_id]
@@ -145,32 +170,30 @@ const rideController = {
                 return res.status(400).json({ success: false, message: "This ride is no longer available" });
             }
 
-            // 2. Update ride_history to assign driver and change status
             await conn.query(
                 "UPDATE ride_history SET Driver_ID_Fk = ?, Ride_Status = 'Accepted' WHERE Ride_ID_Pk = ?",
                 [driver_id, ride_id]
             );
 
-            // Fetch the full ride along with driver details to notify the rider
             const [updatedRide] = await conn.query(
                 `SELECT r.*, d.full_name as driver_name, d.phone as driver_phone, 
                 d.vehicle_type as driver_vehicle_type, d.vehicle_model, d.vehicle_number, 
-                d.vehicle_color, d.photo_path as driver_photo, d.Rating as driver_rating
+                d.vehicle_color, d.photo_path as driver_photo, d.Rating as driver_rating,
+                u.User_Name as rider_name
                 FROM ride_history r
                 LEFT JOIN drivers d ON r.Driver_ID_Fk = d.id
+                LEFT JOIN users u ON r.User_ID_Fk = u.User_ID_Pk
                 WHERE r.Ride_ID_Pk = ?`,
                 [ride_id]
             );
 
             try {
                 const io = getIO();
-                // Notify the rider that their ride was accepted
                 io.to(`user:${updatedRide[0].User_ID_Fk}`).emit("ride_accepted", {
                     ride_id,
                     driver_id,
                     ride: updatedRide[0]
                 });
-                // Notify other drivers that ride is no longer available
                 io.to(`vehicle:${updatedRide[0].Vehicle_Type}`).emit("ride_unavailable", {
                     ride_id
                 });
@@ -213,7 +236,8 @@ const rideController = {
                 return res.status(400).json({ success: false, message: `Ride is already ${ride.Ride_Status}` });
             }
 
-            const cancelled_by = user.role === 'driver' ? 'Driver' : 'User';
+            const isDriverRole = user.role && String(user.role).toLowerCase() === 'driver';
+            const cancelled_by = isDriverRole ? 'Driver' : 'User';
 
             await conn.query(
                 "UPDATE ride_history SET Ride_Status = 'Cancelled', Cancelled_By = ?, Cancellation_Reason = ? WHERE Ride_ID_Pk = ?",
@@ -230,11 +254,13 @@ const rideController = {
                     io.to(`ride:${ride_id}`).emit("ride_cancelled", cancelPayload);
                 } else if (cancelled_by === 'User') {
                     if (ride.Driver_ID_Fk) {
-                        // Rider cancelled after acceptance → notify driver via room and direct message
                         io.to(`ride:${ride_id}`).emit("ride_cancelled", cancelPayload);
                         const [driverRows] = await conn.query("SELECT phone FROM drivers WHERE id = ?", [ride.Driver_ID_Fk]);
                         if (driverRows.length > 0) {
-                            const [userRows] = await conn.query("SELECT User_ID_Pk FROM users WHERE Mobile = ?", [driverRows[0].phone]);
+                            const [userRows] = await conn.query(
+                                "SELECT User_ID_Pk FROM users WHERE REPLACE(Mobile, '-', '') = REPLACE(?, '-', '') AND Role IN ('driver', 'Driver')",
+                                [driverRows[0].phone]
+                            );
                             if (userRows.length > 0) {
                                 io.to(`user:${userRows[0].User_ID_Pk}`).emit("ride_cancelled", cancelPayload);
                             }
@@ -268,13 +294,13 @@ const rideController = {
         try {
             conn = await pool.getConnection();
 
-            const [rides] = await conn.query("SELECT Ride_Status FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
+            const [rides] = await conn.query("SELECT * FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
             if (rides.length === 0) {
                 return res.status(404).json({ success: false, message: "Ride not found" });
             }
 
-            if (rides[0].Ride_Status !== 'Accepted') {
-                return res.status(400).json({ success: false, message: "Only accepted rides can be completed" });
+            if (rides[0].Ride_Status !== 'Started') {
+                return res.status(400).json({ success: false, message: "Only started rides can be completed" });
             }
 
             await conn.query(
@@ -282,8 +308,18 @@ const rideController = {
                 [ride_id]
             );
 
-            // Notify rider that ride is completed
-            const [completedRide] = await conn.query("SELECT * FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
+            const [completedRide] = await conn.query(
+                `SELECT r.*, d.full_name as driver_name, d.phone as driver_phone,
+                d.vehicle_type as driver_vehicle_type, d.vehicle_model, d.vehicle_number,
+                d.vehicle_color, d.photo_path as driver_photo, d.Rating as driver_rating,
+                u.User_Name as rider_name
+                FROM ride_history r
+                LEFT JOIN drivers d ON r.Driver_ID_Fk = d.id
+                LEFT JOIN users u ON r.User_ID_Fk = u.User_ID_Pk
+                WHERE r.Ride_ID_Pk = ?`,
+                [ride_id]
+            );
+
             try {
                 const io = getIO();
                 io.to(`user:${completedRide[0].User_ID_Fk}`).emit("ride_completed", {
@@ -298,7 +334,7 @@ const rideController = {
                 console.error("Socket emit error (non-blocking):", socketErr.message);
             }
 
-            res.json({ success: true, message: "Ride completed successfully" });
+            res.json({ success: true, message: "Ride completed successfully", ride: completedRide[0] });
         } catch (err) {
             console.error("Complete Ride Error:", err);
             res.status(500).json({ success: false, message: "Error completing ride", error: err.message });
@@ -329,14 +365,13 @@ const rideController = {
                 return res.status(400).json({ success: false, message: `Ride must be 'Arrived' to start (Current: ${ride.Ride_Status})` });
             }
 
-            // Verify it's the right driver
-            const [driverRows] = await conn.query("SELECT id FROM drivers WHERE phone = ?", [user.phone]);
+            const [driverRows] = await conn.query("SELECT id FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')", [user.phone]);
             if (driverRows.length === 0 || driverRows[0].id !== ride.Driver_ID_Fk) {
                 return res.status(403).json({ success: false, message: "Only the assigned driver can start this ride" });
             }
 
             await conn.query(
-                "UPDATE ride_history SET Ride_Status = 'Ongoing', Ride_Date = NOW() WHERE Ride_ID_Pk = ?",
+                "UPDATE ride_history SET Ride_Status = 'Started', Start_Time = NOW() WHERE Ride_ID_Pk = ?",
                 [ride_id]
             );
 
@@ -380,9 +415,13 @@ const rideController = {
                 return res.status(400).json({ success: false, message: "Ride must be 'Accepted' to mark as arrived" });
             }
 
-            // Simple check for driver - in production we'd verify by ID properly
             if (ride.Driver_ID_Fk === null) {
                 return res.status(403).json({ success: false, message: "No driver assigned to this ride" });
+            }
+
+            const [driverRows] = await conn.query("SELECT id FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')", [user.phone]);
+            if (driverRows.length === 0 || driverRows[0].id !== ride.Driver_ID_Fk) {
+                return res.status(403).json({ success: false, message: "Only the assigned driver can mark arrival" });
             }
 
             await conn.query(
@@ -478,8 +517,8 @@ const rideController = {
 
     getRideHistory: async (req, res) => {
         const { status } = req.query;
-        const user = req.user; // from authMiddleware
-
+        const user = req.user;
+        console.log(status,user);
         let conn;
         try {
             conn = await pool.getConnection();
@@ -487,9 +526,13 @@ const rideController = {
             let query = "SELECT * FROM ride_history WHERE ";
             let queryParams = [];
 
-            if (user.role === 'driver') {
-                // Fetch driver's actual id first
-                const [driverRows] = await conn.query("SELECT id FROM drivers WHERE phone = ?", [user.phone]);
+            const isDriver = user.role && String(user.role).toLowerCase() === 'driver';
+
+            if (isDriver) {
+                const [driverRows] = await conn.query(
+                    "SELECT id FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                    [user.phone]
+                );
                 if (driverRows.length === 0) {
                     return res.status(404).json({ success: false, message: "Driver profile not found" });
                 }
@@ -501,13 +544,16 @@ const rideController = {
             }
 
             if (status) {
-                if (status.includes(',')) {
-                    const statusArray = status.split(',');
-                    query += `AND Ride_Status IN (${statusArray.map(() => '?').join(',')}) `;
-                    queryParams.push(...statusArray);
+                const statusTrimmed = String(status).trim();
+                if (statusTrimmed.includes(',')) {
+                    const statusArray = statusTrimmed.split(',').map((s) => s.trim()).filter(Boolean);
+                    if (statusArray.length > 0) {
+                        query += `AND Ride_Status IN (${statusArray.map(() => '?').join(',')}) `;
+                        queryParams.push(...statusArray);
+                    }
                 } else {
                     query += "AND Ride_Status = ? ";
-                    queryParams.push(status);
+                    queryParams.push(statusTrimmed);
                 }
             }
 
@@ -519,6 +565,147 @@ const rideController = {
         } catch (err) {
             console.error("Get Ride History Error:", err);
             res.status(500).json({ success: false, message: "Error fetching ride history", error: err.message });
+        } finally {
+            if (conn) conn.release();
+        }
+    },
+
+    submitReview: async (req, res) => {
+        const { ride_id, rating, feedback_tags, comment } = req.body;
+        const user = req.user;
+
+        if (!ride_id || !rating) {
+            return res.status(400).json({ success: false, message: "Ride ID and rating are required" });
+        }
+
+        if (rating < 1 || rating > 5) {
+            return res.status(400).json({ success: false, message: "Rating must be between 1 and 5" });
+        }
+
+        let conn;
+        try {
+            conn = await pool.getConnection();
+
+            const [rides] = await conn.query("SELECT * FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
+            if (rides.length === 0) {
+                return res.status(404).json({ success: false, message: "Ride not found" });
+            }
+
+            const ride = rides[0];
+            if (ride.Ride_Status !== 'Completed') {
+                return res.status(400).json({ success: false, message: "Can only review completed rides" });
+            }
+
+            // Create ride_reviews table if not exists
+            await conn.query(`
+                CREATE TABLE IF NOT EXISTS ride_reviews (
+                    Review_ID_Pk INT AUTO_INCREMENT PRIMARY KEY,
+                    Ride_ID_Fk INT NOT NULL,
+                    Reviewer_ID_Fk INT NOT NULL,
+                    Reviewee_ID_Fk INT DEFAULT NULL,
+                    Reviewer_Role ENUM('User','Driver') NOT NULL,
+                    Rating TINYINT NOT NULL,
+                    Feedback_Tags TEXT DEFAULT NULL,
+                    Comment TEXT DEFAULT NULL,
+                    CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY unique_review (Ride_ID_Fk, Reviewer_ID_Fk)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            `);
+
+            const reviewerRole = user.role === 'driver' ? 'Driver' : 'User';
+            const revieweeId = reviewerRole === 'User' ? ride.Driver_ID_Fk : ride.User_ID_Fk;
+            const tagsStr = Array.isArray(feedback_tags) ? feedback_tags.join(',') : (feedback_tags || null);
+
+            await conn.query(
+                `INSERT INTO ride_reviews (Ride_ID_Fk, Reviewer_ID_Fk, Reviewee_ID_Fk, Reviewer_Role, Rating, Feedback_Tags, Comment)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE Rating = ?, Feedback_Tags = ?, Comment = ?`,
+                [ride_id, user.userId, revieweeId, reviewerRole, rating, tagsStr, comment || null,
+                    rating, tagsStr, comment || null]
+            );
+
+            // Update driver's average rating if reviewed by a user
+            if (reviewerRole === 'User' && ride.Driver_ID_Fk) {
+                const [avgResult] = await conn.query(
+                    `SELECT AVG(Rating) as avg_rating FROM ride_reviews 
+                     WHERE Reviewee_ID_Fk = ? AND Reviewer_Role = 'User'`,
+                    [ride.Driver_ID_Fk]
+                );
+                if (avgResult[0]?.avg_rating) {
+                    await conn.query("UPDATE drivers SET Rating = ? WHERE id = ?",
+                        [Math.round(avgResult[0].avg_rating), ride.Driver_ID_Fk]);
+                }
+            }
+
+            res.json({ success: true, message: "Review submitted successfully" });
+        } catch (err) {
+            console.error("Submit Review Error:", err);
+            res.status(500).json({ success: false, message: "Error submitting review", error: err.message });
+        } finally {
+            if (conn) conn.release();
+        }
+    },
+
+    getDriverProfile: async (req, res) => {
+        const user = req.user;
+
+        let conn;
+        try {
+            conn = await pool.getConnection();
+
+            const [driverRows] = await conn.query(
+                "SELECT * FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                [user.phone]
+            );
+
+            if (driverRows.length === 0) {
+                return res.status(404).json({ success: false, message: "Driver profile not found" });
+            }
+
+            const driver = driverRows[0];
+
+            // Ensure ride_reviews table exists before querying
+            await conn.query(`
+                CREATE TABLE IF NOT EXISTS ride_reviews (
+                    Review_ID_Pk INT AUTO_INCREMENT PRIMARY KEY,
+                    Ride_ID_Fk INT NOT NULL,
+                    Reviewer_ID_Fk INT NOT NULL,
+                    Reviewee_ID_Fk INT DEFAULT NULL,
+                    Reviewer_Role ENUM('User','Driver') NOT NULL,
+                    Rating TINYINT NOT NULL,
+                    Feedback_Tags TEXT DEFAULT NULL,
+                    Comment TEXT DEFAULT NULL,
+                    CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY unique_review (Ride_ID_Fk, Reviewer_ID_Fk)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            `);
+
+            const [reviewStats] = await conn.query(
+                `SELECT COUNT(*) as total_reviews, AVG(Rating) as avg_rating 
+                 FROM ride_reviews WHERE Reviewee_ID_Fk = ? AND Reviewer_Role = 'User'`,
+                [driver.id]
+            );
+
+            const [rideStats] = await conn.query(
+                `SELECT COUNT(*) as total_rides, 
+                 SUM(CASE WHEN Ride_Status = 'Completed' THEN 1 ELSE 0 END) as completed_rides
+                 FROM ride_history WHERE Driver_ID_Fk = ?`,
+                [driver.id]
+            );
+
+            res.json({
+                success: true,
+                driver: {
+                    ...driver,
+                    total_reviews: reviewStats[0]?.total_reviews || 0,
+                    avg_rating: reviewStats[0]?.avg_rating ? parseFloat(reviewStats[0].avg_rating).toFixed(1) : '0.0',
+                    total_rides: rideStats[0]?.total_rides || 0,
+                    completed_rides: rideStats[0]?.completed_rides || 0,
+                }
+            });
+        } catch (err) {
+            console.error("Get Driver Profile Error:", err);
+            res.status(500).json({ success: false, message: "Error fetching driver profile", error: err.message });
         } finally {
             if (conn) conn.release();
         }

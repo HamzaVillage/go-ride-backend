@@ -47,7 +47,7 @@ function initSocket(server) {
                     // Try to fetch from DB if not provided
                     const conn = await pool.getConnection();
                     try {
-                        const [rows] = await conn.query("SELECT vehicle_type FROM drivers WHERE phone = ?", [phone]);
+                        const [rows] = await conn.query("SELECT vehicle_type FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')", [phone]);
                         if (rows.length > 0) {
                             const dbVehicleType = rows[0].vehicle_type;
                             socket.join(`vehicle:${dbVehicleType}`);

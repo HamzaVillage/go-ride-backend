@@ -106,7 +106,11 @@ const authController = {
                 const [newUserRows] = await conn.query("SELECT * FROM users WHERE User_ID_Pk = ?", [userId]);
                 user = newUserRows[0];
             } else {
-                const [userRows] = await conn.query("SELECT * FROM users WHERE REPLACE(Mobile, '-', '') = ?", [normalizedPhone]);
+                // Exclude driver-role users so a rider with the same phone doesn't get the wrong account
+                const [userRows] = await conn.query(
+                    "SELECT * FROM users WHERE REPLACE(Mobile, '-', '') = ? AND (Role IS NULL OR Role != 'driver') ORDER BY User_ID_Pk ASC",
+                    [normalizedPhone]
+                );
                 if (userRows.length === 0) {
                     await conn.rollback();
                     return res.status(404).json({ success: false, message: "User not found" });

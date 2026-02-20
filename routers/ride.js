@@ -27,6 +27,12 @@ router.post('/complete', authMiddleware, rideController.completeRide);
 // Update ride fare (Rider)
 router.post('/update-fare', authMiddleware, rideController.updateFare);
 
+// Submit a review (User/Driver)
+router.post('/review', authMiddleware, rideController.submitReview);
+
+// Get driver profile (Driver)
+router.get('/driver-profile', authMiddleware, rideController.getDriverProfile);
+
 // Get recent addresses (User)
 router.get('/recent-addresses', authMiddleware, rideController.getRecentAddresses);
 
