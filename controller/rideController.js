@@ -61,7 +61,7 @@ const rideController = {
                      WHERE r.Ride_ID_Pk = ?`,
                     [result.insertId]
                 );
-                io.to(`vehicle:${vehicle_type}`).emit("new_ride_request", {
+                io.to(`vehicle:${vehicle_type.toLowerCase()}`).emit("new_ride_request", {
                     ride_id: result.insertId,
                     ride: newRide[0]
                 });
@@ -453,72 +453,115 @@ const rideController = {
             night_charge, peak_hour_surcharge, waiting_charges
         } = req.body;
         const user = req.user;
+        const MAX_RETRIES = 2;
 
         if (!ride_id || fare === undefined) {
+            console.log("❌ Update Fare Missing Data:", { ride_id, fare });
             return res.status(400).json({ success: false, message: "Ride ID and new fare are required" });
         }
+        console.log("🚀 Update Fare Request:", { ride_id, fare, userId: user.userId });
 
-        let conn;
-        try {
-            conn = await pool.getConnection();
-
-            const [rides] = await conn.query("SELECT * FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
-            if (rides.length === 0) {
-                return res.status(404).json({ success: false, message: "Ride not found" });
-            }
-
-            const ride = rides[0];
-            if (ride.User_ID_Fk !== user.userId) {
-                return res.status(403).json({ success: false, message: "You can only update fares for rides you created" });
-            }
-
-            if (ride.Ride_Status !== 'Requested') {
-                return res.status(400).json({ success: false, message: "Fare can only be updated for 'Requested' rides" });
-            }
-
-            await conn.query(
-                `UPDATE ride_history SET 
-                    Fare = ?, Base_Fare = ?, Per_Km_Rate = ?, 
-                    Night_Charge = ?, Peak_Hour_Surcharge = ?, 
-                    Waiting_Charges = ? 
-                WHERE Ride_ID_Pk = ?`,
-                [
-                    fare,
-                    base_fare || ride.Base_Fare,
-                    per_km_rate || ride.Per_Km_Rate,
-                    night_charge || ride.Night_Charge,
-                    peak_hour_surcharge || ride.Peak_Hour_Surcharge,
-                    waiting_charges || ride.Waiting_Charges,
-                    ride_id
-                ]
-            );
-
-            // Notify drivers about fare update
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            let conn;
             try {
-                const io = getIO();
-                const [updatedRide] = await conn.query("SELECT * FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
-                io.to(`vehicle:${ride.Vehicle_Type}`).emit("fare_updated", {
-                    ride_id,
-                    new_fare: fare,
-                    ride: updatedRide[0]
-                });
-            } catch (socketErr) {
-                console.error("Socket emit error (non-blocking):", socketErr.message);
-            }
+                conn = await pool.getConnection();
 
-            res.json({ success: true, message: "Ride fare updated successfully" });
-        } catch (err) {
-            console.error("Update Fare Error:", err);
-            res.status(500).json({ success: false, message: "Error updating fare", error: err.message });
-        } finally {
-            if (conn) conn.release();
+                const [rides] = await conn.query("SELECT * FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
+                if (rides.length === 0) {
+                    conn.release();
+                    console.log("❌ Update Fare: Ride not found ID:", ride_id);
+                    return res.status(404).json({ success: false, message: "Ride not found" });
+                }
+
+                const ride = rides[0];
+                if (ride.User_ID_Fk != user.userId) {
+                    conn.release();
+                    console.log("❌ Update Fare Forbidden:", { rideUserId: ride.User_ID_Fk, currentUserId: user.userId });
+                    return res.status(403).json({ success: false, message: "You can only update fares for rides you created" });
+                }
+
+                if (ride.Ride_Status !== 'Requested') {
+                    conn.release();
+                    console.log("❌ Update Fare Invalid Status:", ride.Ride_Status);
+                    return res.status(400).json({ success: false, message: `Fare can only be updated for 'Requested' rides. Current: ${ride.Ride_Status}` });
+                }
+
+                const payload = {
+                    ride_id: Number(ride_id),
+                    fare: Number(fare),
+                    base_fare: Number(base_fare || ride.Base_Fare || 0),
+                    per_km_rate: Number(per_km_rate || ride.Per_Km_Rate || 0),
+                    night_charge: Number(night_charge || ride.Night_Charge || 0),
+                    peak_hour_surcharge: Number(peak_hour_surcharge || ride.Peak_Hour_Surcharge || 0),
+                    waiting_charges: Number(waiting_charges || ride.Waiting_Charges || 0),
+                };
+                console.log('🚀 Updating Ride Fare with Payload:', payload);
+
+                const [updateResult] = await conn.query(
+                    `UPDATE ride_history SET 
+                        Fare = ?, Base_Fare = ?, Per_Km_Rate = ?, 
+                        Night_Charge = ?, Peak_Hour_Surcharge = ?, 
+                        Waiting_Charges = ? 
+                    WHERE Ride_ID_Pk = ?`,
+                    [
+                        payload.fare,
+                        payload.base_fare,
+                        payload.per_km_rate,
+                        payload.night_charge,
+                        payload.peak_hour_surcharge,
+                        payload.waiting_charges,
+                        payload.ride_id
+                    ]
+                );
+
+                if (updateResult.affectedRows === 0) {
+                    conn.release();
+                    console.log("⚠️ Update Fare: No rows updated (0 affectedRows) for ID:", ride_id);
+                    return res.status(500).json({ success: false, message: "Failed to update fare record in database" });
+                }
+
+                console.log("✅ DB Updated successfully. rowsAffected:", updateResult.affectedRows);
+
+                // Notify drivers about fare update
+                try {
+                    const io = getIO();
+                    const [updatedRide] = await conn.query("SELECT * FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
+                    io.to(`vehicle:${ride.Vehicle_Type.toLowerCase()}`).emit("fare_updated", {
+                        ride_id: Number(ride_id),
+                        new_fare: Number(fare),
+                        ride: { ...updatedRide[0], Fare: Number(fare) }
+                    });
+                } catch (socketErr) {
+                    console.error("Socket emit error (non-blocking):", socketErr.message);
+                }
+
+                conn.release();
+                return res.json({ success: true, message: "Ride fare updated successfully" });
+
+            } catch (err) {
+                if (conn) {
+                    try { conn.release(); } catch (e) { /* ignore */ }
+                }
+
+                const isConnError = err.code === 'ECONNRESET' || err.code === 'ECONNABORTED' ||
+                    err.code === 'PROTOCOL_CONNECTION_LOST' || err.message?.includes('ECONNRESET');
+
+                if (isConnError && attempt < MAX_RETRIES) {
+                    console.log(`🔄 updateFare: DB connection error, retrying (${attempt + 1}/${MAX_RETRIES})...`);
+                    await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+                    continue;
+                }
+
+                console.error("Update Fare Error:", err);
+                return res.status(500).json({ success: false, message: "Error updating fare", error: err.message });
+            }
         }
     },
 
     getRideHistory: async (req, res) => {
         const { status } = req.query;
         const user = req.user;
-        console.log(status,user);
+        console.log(status, user);
         let conn;
         try {
             conn = await pool.getConnection();
@@ -735,6 +778,83 @@ const rideController = {
             res.status(500).json({ success: false, message: "Error fetching recent addresses", error: err.message });
         } finally {
             if (conn) conn.release();
+        }
+    },
+
+    getActiveRide: async (req, res) => {
+        const user = req.user;
+        const MAX_RETRIES = 2;
+
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            let conn;
+            try {
+                conn = await pool.getConnection();
+
+                const isDriver = user.role && String(user.role).toLowerCase() === 'driver';
+
+                let ride = null;
+
+                if (isDriver) {
+                    // Find the driver's id from phone
+                    const [driverRows] = await conn.query(
+                        "SELECT id FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                        [user.phone]
+                    );
+                    if (driverRows.length === 0) {
+                        conn.release();
+                        return res.json({ success: true, hasActiveRide: false, ride: null });
+                    }
+                    const driverId = driverRows[0].id;
+
+                    const [rides] = await conn.query(
+                        `SELECT r.*, u.User_Name as rider_name, u.Mobile as rider_phone
+                         FROM ride_history r
+                         LEFT JOIN users u ON r.User_ID_Fk = u.User_ID_Pk
+                         WHERE r.Driver_ID_Fk = ? AND r.Ride_Status IN ('Accepted', 'Arrived', 'Started')
+                         ORDER BY r.CreatedAt DESC LIMIT 1`,
+                        [driverId]
+                    );
+                    if (rides.length > 0) ride = rides[0];
+                } else {
+                    // Rider: check for any active ride
+                    const [rides] = await conn.query(
+                        `SELECT r.*, d.full_name as driver_name, d.phone as driver_phone,
+                         d.vehicle_type as driver_vehicle_type, d.vehicle_model, d.vehicle_number,
+                         d.vehicle_color, d.photo_path as driver_photo, d.Rating as driver_rating
+                         FROM ride_history r
+                         LEFT JOIN drivers d ON r.Driver_ID_Fk = d.id
+                         WHERE r.User_ID_Fk = ? AND r.Ride_Status IN ('Requested', 'Accepted', 'Arrived', 'Started')
+                         ORDER BY r.CreatedAt DESC LIMIT 1`,
+                        [user.userId]
+                    );
+                    if (rides.length > 0) ride = rides[0];
+                }
+
+                conn.release();
+
+                if (ride) {
+                    return res.json({ success: true, hasActiveRide: true, ride });
+                }
+                return res.json({ success: true, hasActiveRide: false, ride: null });
+
+            } catch (err) {
+                if (conn) {
+                    try { conn.release(); } catch (e) { /* ignore */ }
+                }
+
+                // Retry on connection reset errors
+                const isConnError = err.code === 'ECONNRESET' || err.code === 'ECONNABORTED' ||
+                    err.code === 'PROTOCOL_CONNECTION_LOST' || err.message?.includes('ECONNRESET');
+
+                if (isConnError && attempt < MAX_RETRIES) {
+                    console.log(`🔄 getActiveRide: DB connection error, retrying (${attempt + 1}/${MAX_RETRIES})...`);
+                    await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+                    continue;
+                }
+
+                console.error("Get Active Ride Error:", err);
+                return res.status(500).json({ success: false, message: "Error checking active ride", error: err.message });
+            }
         }
     }
 };

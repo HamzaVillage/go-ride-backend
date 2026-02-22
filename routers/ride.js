@@ -39,4 +39,7 @@ router.get('/recent-addresses', authMiddleware, rideController.getRecentAddresse
 // Get ride history (User/Driver)
 router.get('/history', authMiddleware, rideController.getRideHistory);
 
+// Get active ride for ride recovery on app restart (User/Driver)
+router.get('/active', authMiddleware, rideController.getActiveRide);
+
 module.exports = router;

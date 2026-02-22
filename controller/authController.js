@@ -279,6 +279,7 @@ const authController = {
 
             await cleanupOTPs(pool);
             const otp = await sendSMS(normalizedPhone);
+            console.log("OTP:", otp);
             const otp_hash = await bcrypt.hash(otp, 10);
             const expires_at = new Date(Date.now() + 10 * 60 * 1000);
 
