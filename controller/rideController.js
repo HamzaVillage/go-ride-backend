@@ -109,7 +109,7 @@ const rideController = {
                 WHERE r.Driver_ID_Fk IS NULL 
                 AND r.Ride_Status = 'Requested'
                 AND r.Vehicle_Type = ?
-                HAVING distance_km < 20
+                HAVING distance_km < 50
                 ORDER BY distance_km ASC
             `;
 
