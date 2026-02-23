@@ -13,8 +13,9 @@ function initSocket(server) {
             origin: "*",
             methods: ["GET", "POST"]
         },
-        pingInterval: 10000,
-        pingTimeout: 5000,
+        pingInterval: 25000,
+        pingTimeout: 20000,
+        connectTimeout: 45000,
     });
 
     // ── JWT Authentication Middleware ──
