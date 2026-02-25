@@ -47,7 +47,6 @@ const authController = {
             const normalizedPhone = phone_number.replace(/-/g, '');
             await cleanupOTPs(pool);
             const otp = await sendSMS(normalizedPhone);
-            const otp_hash = await bcrypt.hash(otp, 10);
             const expires_at = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
             let conn;
@@ -55,7 +54,7 @@ const authController = {
                 conn = await pool.getConnection();
                 await conn.query(
                     "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?",
-                    [normalizedPhone, otp_hash, expires_at, 'general', otp_hash, expires_at, 'general']
+                    [normalizedPhone, otp, expires_at, 'general', otp, expires_at, 'general']
                 );
 
                 res.json({ success: true, message: "OTP sent successfully" });
@@ -81,7 +80,8 @@ const authController = {
             if (rows.length === 0) return res.status(400).json({ success: false, message: "Invalid or expired OTP" });
 
             const otpData = rows[0];
-            const valid = await bcrypt.compare(otp, otpData.otp_hash);
+            console.log(`🔑 OTP Compare: received='${otp}' stored='${otpData.otp_hash}'`);
+            const valid = otp.toString().trim() === otpData.otp_hash.toString().trim();
             if (!valid) {
                 await conn.query("UPDATE otp_verifications SET attempts = attempts + 1 WHERE phone_number = ?", [normalizedPhone]);
                 return res.status(400).json({ success: false, message: "Invalid OTP" });
@@ -183,7 +183,6 @@ const authController = {
 
             await cleanupOTPs(pool);
             const otp = await sendSMS(normalizedPhone);
-            const otp_hash = await bcrypt.hash(otp, 10);
             const hashedPassword = await bcrypt.hash(password, 10);
             const expires_at = new Date(Date.now() + 10 * 60 * 1000);
 
@@ -191,7 +190,7 @@ const authController = {
 
             await conn.query(
                 "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose, payload) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?, payload = ?",
-                [normalizedPhone, otp_hash, expires_at, 'register', payload, otp_hash, expires_at, 'register', payload]
+                [normalizedPhone, otp, expires_at, 'register', payload, otp, expires_at, 'register', payload]
             );
 
             res.status(200).json({
@@ -225,14 +224,13 @@ const authController = {
 
             await cleanupOTPs(pool);
             const otp = await sendSMS(normalizedPhone);
-            const otp_hash = await bcrypt.hash(otp, 10);
             const expires_at = new Date(Date.now() + 10 * 60 * 1000);
 
             console.log("OTP:", otp);
 
             await conn.query(
                 "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?",
-                [normalizedPhone, otp_hash, expires_at, 'login', otp_hash, expires_at, 'login']
+                [normalizedPhone, otp, expires_at, 'login', otp, expires_at, 'login']
             );
 
             res.json({
@@ -280,12 +278,11 @@ const authController = {
             await cleanupOTPs(pool);
             const otp = await sendSMS(normalizedPhone);
             console.log("OTP:", otp);
-            const otp_hash = await bcrypt.hash(otp, 10);
             const expires_at = new Date(Date.now() + 10 * 60 * 1000);
 
             await conn.query(
                 "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?",
-                [normalizedPhone, otp_hash, expires_at, 'driver_login', otp_hash, expires_at, 'driver_login']
+                [normalizedPhone, otp, expires_at, 'driver_login', otp, expires_at, 'driver_login']
             );
 
             console.log(`📱 Debug Driver OTP for ${phone}: ${otp}`);
@@ -319,7 +316,8 @@ const authController = {
             }
 
             const otpData = otpRows[0];
-            const isMatch = await bcrypt.compare(otp, otpData.otp_hash);
+            console.log(`🔑 Driver OTP Compare: received='${otp}' stored='${otpData.otp_hash}'`);
+            const isMatch = otp.toString().trim() === otpData.otp_hash.toString().trim();
 
             if (!isMatch) {
                 await conn.query("UPDATE otp_verifications SET attempts = attempts + 1 WHERE phone_number = ?", [normalizedPhone]);
@@ -395,12 +393,11 @@ const authController = {
 
             await cleanupOTPs(pool);
             const otp = await sendSMS(normalizedPhone);
-            const otp_hash = await bcrypt.hash(otp, 10);
             const expires_at = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
             await conn.query(
                 "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?",
-                [normalizedPhone, otp_hash, expires_at, 'forgot_password', otp_hash, expires_at, 'forgot_password']
+                [normalizedPhone, otp, expires_at, 'forgot_password', otp, expires_at, 'forgot_password']
             );
 
             res.json({ success: true, message: "Reset OTP sent successfully" });
@@ -435,7 +432,8 @@ const authController = {
             if (rows.length === 0) return res.status(400).json({ success: false, message: "Invalid or expired OTP" });
 
             const otpData = rows[0];
-            const valid = await bcrypt.compare(otp, otpData.otp_hash);
+            console.log(`🔑 Reset OTP Compare: received='${otp}' stored='${otpData.otp_hash}'`);
+            const valid = otp.toString().trim() === otpData.otp_hash.toString().trim();
             if (!valid) {
                 await conn.query("UPDATE otp_verifications SET attempts = attempts + 1 WHERE phone_number = ?", [normalizedPhone]);
                 return res.status(400).json({ success: false, message: "Invalid OTP" });

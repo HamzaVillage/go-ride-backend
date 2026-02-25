@@ -752,6 +752,29 @@
                     "response": []
                 }
             ]
+        },
+        {
+            "name": "System Config",
+            "item": [
+                {
+                    "name": "Get System Config",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/sysconfig/get-config",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "sysconfig",
+                                "get-config"
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
         }
     ],
     "event": [
