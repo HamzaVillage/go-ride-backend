@@ -35,20 +35,30 @@ const rideController = {
                 });
             }
 
+            // Fetch the fee percentage for the vehicle type
+            const [rateRows] = await conn.query("SELECT Fee_Percentage FROM vehicle_fare_rate WHERE Vehicle_Type = ?", [vehicle_type]);
+            const fee_percentage = rateRows.length > 0 ? parseFloat(rateRows[0].Fee_Percentage) : 0;
+
+            // Calculate organization fee from the total fare
+            // The fare passed from frontend already includes the fee
+            const base_total_fare = parseFloat(fare) / (1 + fee_percentage / 100);
+            const organization_fee = parseFloat(fare) - base_total_fare;
+
             const [result] = await conn.query(
                 `INSERT INTO ride_history (
                     User_ID_Fk, Pickup_Location, Drop_Location, Pickup_Lat, Pickup_Lng, 
                     Drop_Lat, Drop_Lng, Distance, Duration, Fare, Base_Fare, 
                     Per_Km_Rate, Night_Charge, Peak_Hour_Surcharge, Total_Waiting_Time, 
                     Waiting_Charges, Is_Peak_Hour, Is_Night_Ride, Payment_Method, 
-                    Vehicle_Type, Ride_Status, Ride_Date, Start_Time
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    Vehicle_Type, Ride_Status, Ride_Date, Start_Time, Fee_Percentage, Organization_Fee
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     user_id, pickup_location, drop_location, pickup_lat, pickup_lng,
                     drop_lat, drop_lng, distance, duration, fare, base_fare,
                     per_km_rate, night_charge, peak_hour_surcharge, total_waiting_time,
                     waiting_charges, is_peak_hour ? 1 : 0, is_night_ride ? 1 : 0, payment_method,
-                    vehicle_type, 'Requested', ride_date || new Date(), start_time || new Date()
+                    vehicle_type, 'Requested', ride_date || new Date(), start_time || new Date(),
+                    fee_percentage, organization_fee
                 ]
             );
 
@@ -189,12 +199,18 @@ const rideController = {
 
             try {
                 const io = getIO();
-                io.to(`user:${updatedRide[0].User_ID_Fk}`).emit("ride_accepted", {
+                const riderRoom = `user:${updatedRide[0].User_ID_Fk}`;
+                const vehicleRoom = `vehicle:${String(updatedRide[0].Vehicle_Type).toLowerCase()}`;
+
+                console.log(`📡 Emitting ride_accepted to ${riderRoom}`);
+                io.to(riderRoom).emit("ride_accepted", {
                     ride_id,
                     driver_id,
                     ride: updatedRide[0]
                 });
-                io.to(`vehicle:${updatedRide[0].Vehicle_Type}`).emit("ride_unavailable", {
+
+                console.log(`📡 Emitting ride_unavailable to ${vehicleRoom}`);
+                io.to(vehicleRoom).emit("ride_unavailable", {
                     ride_id
                 });
             } catch (socketErr) {
@@ -526,7 +542,10 @@ const rideController = {
                 try {
                     const io = getIO();
                     const [updatedRide] = await conn.query("SELECT * FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
-                    io.to(`vehicle:${ride.Vehicle_Type.toLowerCase()}`).emit("fare_updated", {
+                    const vehicleRoom = `vehicle:${String(ride.Vehicle_Type).toLowerCase()}`;
+
+                    console.log(`📡 Emitting fare_updated to ${vehicleRoom}`);
+                    io.to(vehicleRoom).emit("fare_updated", {
                         ride_id: Number(ride_id),
                         new_fare: Number(fare),
                         ride: { ...updatedRide[0], Fare: Number(fare) }

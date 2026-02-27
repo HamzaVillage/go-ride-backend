@@ -120,6 +120,8 @@ CREATE TABLE `ride_history` (
   `Ride_Date` timestamp NOT NULL DEFAULT current_timestamp(),
   `Start_Time` timestamp NULL DEFAULT NULL,
   `End_Time` timestamp NULL DEFAULT NULL,
+  `Fee_Percentage` decimal(5,2) DEFAULT 0.00,
+  `Organization_Fee` decimal(8,2) DEFAULT 0.00,
   `CreatedAt` timestamp NOT NULL DEFAULT current_timestamp(),
   `UpdatedAt` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -314,6 +316,7 @@ CREATE TABLE `vehicle_fare_rate` (
   `Peak_Hours_Percent` int(11) DEFAULT 25 COMMENT 'Percentage increase during peak hours',
   `Minimum_Distance` decimal(5,2) DEFAULT 1.00 COMMENT 'Minimum chargeable distance in km',
   `Maximum_Distance` decimal(6,2) DEFAULT 50.00 COMMENT 'Maximum allowed distance in km',
+  `Fee_Percentage` decimal(5,2) DEFAULT 10.00 COMMENT 'Percentage organization takes from fare',
   `Currency` varchar(10) DEFAULT 'PKR',
   `Is_Active` tinyint(1) DEFAULT 1,
   `CreatedAt` timestamp NOT NULL DEFAULT current_timestamp(),
@@ -324,14 +327,14 @@ CREATE TABLE `vehicle_fare_rate` (
 -- Dumping data for table `vehicle_fare_rate`
 --
 
-INSERT INTO `vehicle_fare_rate` (`Rate_ID_Pk`, `Vehicle_Type`, `Base_Fare`, `Per_Km_Rate`, `Per_Minute_Rate`, `Night_Charge_Percent`, `Peak_Hours_Percent`, `Minimum_Distance`, `Maximum_Distance`, `Currency`, `Is_Active`, `CreatedAt`, `UpdatedAt`) VALUES
-(8, 'Auto-Rickshaw', 30.00, 25.00, 2.00, 20, 15, 1.00, 15.00, 'PKR', 1, '2026-02-03 04:53:43', '2026-02-11 10:32:11'),
-(9, 'Bike', 25.00, 15.00, 1.00, 20, 15, 1.00, 10.00, 'PKR', 1, '2026-02-03 04:53:43', '2026-02-11 10:32:27'),
-(10, 'Mini', 50.00, 35.00, 3.00, 20, 20, 1.00, 30.00, 'PKR', 1, '2026-02-03 04:53:43', '2026-02-11 10:32:38'),
-(11, 'AC', 80.00, 45.00, 4.00, 25, 25, 1.00, 50.00, 'PKR', 1, '2026-02-03 04:53:43', '2026-02-11 10:32:47'),
-(12, 'Premium', 100.00, 65.00, 6.00, 30, 25, 1.00, 50.00, 'PKR', 1, '2026-02-03 04:53:43', '2026-02-11 10:32:53'),
-(13, 'XL', 80.00, 55.00, 5.00, 25, 25, 1.00, 50.00, 'PKR', 0, '2026-02-03 04:53:43', '2026-02-11 10:32:59'),
-(14, 'Bike-Delivery', 25.00, 20.00, 1.50, 25, 15, 1.00, 20.00, 'PKR', 1, '2026-02-03 04:53:43', '2026-02-11 10:33:05');
+INSERT INTO `vehicle_fare_rate` (`Rate_ID_Pk`, `Vehicle_Type`, `Base_Fare`, `Per_Km_Rate`, `Per_Minute_Rate`, `Night_Charge_Percent`, `Peak_Hours_Percent`, `Minimum_Distance`, `Maximum_Distance`, `Fee_Percentage`, `Currency`, `Is_Active`, `CreatedAt`, `UpdatedAt`) VALUES
+(8, 'Auto-Rickshaw', 30.00, 25.00, 2.00, 20, 15, 1.00, 15.00, 10.00, 'PKR', 1, '2026-02-03 04:53:43', '2026-02-11 10:32:11'),
+(9, 'Bike', 25.00, 15.00, 1.00, 20, 15, 1.00, 10.00, 10.00, 'PKR', 1, '2026-02-03 04:53:43', '2026-02-11 10:32:27'),
+(10, 'Mini', 50.00, 35.00, 3.00, 20, 20, 1.00, 30.00, 12.00, 'PKR', 1, '2026-02-03 04:53:43', '2026-02-11 10:32:38'),
+(11, 'AC', 80.00, 45.00, 4.00, 25, 25, 1.00, 50.00, 15.00, 'PKR', 1, '2026-02-03 04:53:43', '2026-02-11 10:32:47'),
+(12, 'Premium', 100.00, 65.00, 6.00, 30, 25, 1.00, 50.00, 15.00, 'PKR', 1, '2026-02-03 04:53:43', '2026-02-11 10:32:53'),
+(13, 'XL', 80.00, 55.00, 5.00, 25, 25, 1.00, 50.00, 15.00, 'PKR', 0, '2026-02-03 04:53:43', '2026-02-11 10:32:59'),
+(14, 'Bike-Delivery', 25.00, 20.00, 1.50, 25, 15, 1.00, 20.00, 10.00, 'PKR', 1, '2026-02-03 04:53:43', '2026-02-11 10:33:05');
 
 -- --------------------------------------------------------
 

@@ -40,6 +40,7 @@ function initSocket(server) {
 
         // Every user joins their personal room for targeted notifications
         socket.join(`user:${userId}`);
+        console.log(`👤 User joined room: user:${userId}`);
 
         // ── Auto-rejoin active ride room on reconnect ──
         try {

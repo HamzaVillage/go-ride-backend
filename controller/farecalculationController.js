@@ -52,6 +52,11 @@ const calculateEstimatedFare = (vehicle_rate, distance, duration, is_peak_hour, 
     // Calculate final fare
     let total_fare = base_total + night_charge + peak_hour_surcharge;
 
+    // Add Organization Fee (added TO the rider's total)
+    const fee_percent = parseFloat(vehicle_rate.Fee_Percentage || 0);
+    const organization_fee = (total_fare * fee_percent) / 100;
+    total_fare += organization_fee;
+
     // Round up to nearest 10
     total_fare = Math.ceil(total_fare / 10) * 10;
 
@@ -62,7 +67,9 @@ const calculateEstimatedFare = (vehicle_rate, distance, duration, is_peak_hour, 
         time_fare,
         waiting_charges,
         night_charge,
-        peak_hour_surcharge
+        peak_hour_surcharge,
+        fee_percentage: fee_percent,
+        organization_fee: organization_fee
     };
 };
 
@@ -124,7 +131,8 @@ const farecalculationController = {
                         per_km_rate: rate.Per_Km_Rate,
                         per_minute_rate: rate.Per_Minute_Rate,
                         night_charge_percent: rate.Night_Charge_Percent,
-                        peak_hour_percent: rate.Peak_Hours_Percent
+                        peak_hour_percent: rate.Peak_Hours_Percent,
+                        fee_percentage: rate.Fee_Percentage
                     }
                 };
 
@@ -196,6 +204,14 @@ const farecalculationController = {
                     amount: calc.peak_hour_surcharge,
                     description: `Peak hour surcharge (${rate.Peak_Hours_Percent}%)`,
                     percentage: `${rate.Peak_Hours_Percent}%`
+                };
+            }
+
+            if (calc.organization_fee > 0) {
+                breakdown.organization_fee = {
+                    amount: calc.organization_fee,
+                    description: `Organization Fee (${rate.Fee_Percentage}%)`,
+                    percentage: `${rate.Fee_Percentage}%`
                 };
             }
 
