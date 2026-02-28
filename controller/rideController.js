@@ -200,14 +200,18 @@ const rideController = {
             try {
                 const io = getIO();
                 const riderRoom = `user:${updatedRide[0].User_ID_Fk}`;
+                const rideRoom = `ride:${ride_id}`;
                 const vehicleRoom = `vehicle:${String(updatedRide[0].Vehicle_Type).toLowerCase()}`;
 
+                const payload = { ride_id, driver_id, ride: updatedRide[0] };
+
+                // Emit to rider's user room (rider is always in user:userId when connected)
                 console.log(`📡 Emitting ride_accepted to ${riderRoom}`);
-                io.to(riderRoom).emit("ride_accepted", {
-                    ride_id,
-                    driver_id,
-                    ride: updatedRide[0]
-                });
+                io.to(riderRoom).emit("ride_accepted", payload);
+
+                // Also emit to ride room (rider joins ride:rideId when they create the ride, so they receive here too)
+                console.log(`📡 Emitting ride_accepted to ${rideRoom}`);
+                io.to(rideRoom).emit("ride_accepted", payload);
 
                 console.log(`📡 Emitting ride_unavailable to ${vehicleRoom}`);
                 io.to(vehicleRoom).emit("ride_unavailable", {
