@@ -328,6 +328,21 @@ const rideController = {
                 [ride_id]
             );
 
+            // Insert driver earning (one row per completed ride)
+            try {
+                const ride = rides[0];
+                const totalFare = parseFloat(ride.Fare || 0);
+                const orgFee = parseFloat(ride.Organization_Fee || 0);
+                const driverEarning = Math.max(0, totalFare - orgFee);
+                await conn.query(
+                    `INSERT INTO driver_earnings (Ride_ID_Fk, Driver_ID_Fk, Total_Fare, Organization_Fee, Driver_Earning, Payment_Method, Vehicle_Type, Earned_At)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+                    [ride_id, ride.Driver_ID_Fk, totalFare, orgFee, driverEarning, ride.Payment_Method || 'Cash', ride.Vehicle_Type || null]
+                );
+            } catch (earnErr) {
+                console.error("Driver earning insert (non-blocking):", earnErr.message);
+            }
+
             const [completedRide] = await conn.query(
                 `SELECT r.*, d.full_name as driver_name, d.phone as driver_phone,
                 d.vehicle_type as driver_vehicle_type, d.vehicle_model, d.vehicle_number,
@@ -772,6 +787,60 @@ const rideController = {
         } catch (err) {
             console.error("Get Driver Profile Error:", err);
             res.status(500).json({ success: false, message: "Error fetching driver profile", error: err.message });
+        } finally {
+            if (conn) conn.release();
+        }
+    },
+
+    getDriverEarnings: async (req, res) => {
+        const user = req.user;
+        const isDriver = user.role && String(user.role).toLowerCase() === 'driver';
+        if (!isDriver) {
+            return res.status(403).json({ success: false, message: "Only drivers can view earnings" });
+        }
+
+        let conn;
+        try {
+            conn = await pool.getConnection();
+
+            const [driverRows] = await conn.query(
+                "SELECT id FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                [user.phone]
+            );
+            if (driverRows.length === 0) {
+                return res.status(404).json({ success: false, message: "Driver profile not found" });
+            }
+            const driverId = driverRows[0].id;
+
+            const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
+            const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+
+            const [rows] = await conn.query(
+                `SELECT e.Earning_ID_Pk, e.Ride_ID_Fk, e.Total_Fare, e.Organization_Fee, e.Driver_Earning, e.Payment_Method, e.Vehicle_Type, e.Earned_At, e.CreatedAt,
+                 r.Pickup_Location, r.Drop_Location, r.Ride_Date
+                 FROM driver_earnings e
+                 LEFT JOIN ride_history r ON r.Ride_ID_Pk = e.Ride_ID_Fk
+                 WHERE e.Driver_ID_Fk = ?
+                 ORDER BY e.Earned_At DESC
+                 LIMIT ? OFFSET ?`,
+                [driverId, limit, offset]
+            );
+
+            const [summaryRows] = await conn.query(
+                `SELECT COUNT(*) as total_rides, COALESCE(SUM(Driver_Earning), 0) as total_earning
+                 FROM driver_earnings WHERE Driver_ID_Fk = ?`,
+                [driverId]
+            );
+
+            const summary = {
+                total_rides: summaryRows[0]?.total_rides || 0,
+                total_earning: parseFloat(summaryRows[0]?.total_earning || 0),
+            };
+
+            res.json({ success: true, data: rows, summary });
+        } catch (err) {
+            console.error("Get Driver Earnings Error:", err);
+            res.status(500).json({ success: false, message: "Error fetching earnings", error: err.message });
         } finally {
             if (conn) conn.release();
         }

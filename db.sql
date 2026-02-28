@@ -216,6 +216,25 @@ CREATE TABLE `ride_reviews` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `driver_earnings`
+-- One row per completed ride: driver's earning = Total_Fare - Organization_Fee
+--
+CREATE TABLE `driver_earnings` (
+  `Earning_ID_Pk` int(11) NOT NULL,
+  `Ride_ID_Fk` int(11) NOT NULL,
+  `Driver_ID_Fk` int(11) NOT NULL,
+  `Total_Fare` decimal(8,2) NOT NULL COMMENT 'Amount rider paid (from ride_history.Fare)',
+  `Organization_Fee` decimal(8,2) NOT NULL DEFAULT 0.00,
+  `Driver_Earning` decimal(8,2) NOT NULL COMMENT 'Total_Fare - Organization_Fee',
+  `Payment_Method` enum('Cash','Card','Wallet','Easypaisa','JazzCash') DEFAULT 'Cash',
+  `Vehicle_Type` varchar(50) DEFAULT NULL,
+  `Earned_At` timestamp NOT NULL DEFAULT current_timestamp() COMMENT 'When ride was completed',
+  `CreatedAt` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `sysconfigsetup`
 --
 
@@ -467,6 +486,15 @@ ALTER TABLE `ride_reviews`
   ADD UNIQUE KEY `unique_review` (`Ride_ID_Fk`,`Reviewer_ID_Fk`);
 
 --
+-- Indexes for table `driver_earnings`
+--
+ALTER TABLE `driver_earnings`
+  ADD PRIMARY KEY (`Earning_ID_Pk`),
+  ADD UNIQUE KEY `unique_ride_earning` (`Ride_ID_Fk`),
+  ADD KEY `idx_driver_earnings_driver` (`Driver_ID_Fk`),
+  ADD KEY `idx_driver_earnings_earned_at` (`Earned_At`);
+
+--
 -- Indexes for table `sysconfigsetup`
 --
 ALTER TABLE `sysconfigsetup`
@@ -564,6 +592,12 @@ ALTER TABLE `ride_history`
 --
 ALTER TABLE `ride_reviews`
   MODIFY `Review_ID_Pk` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `driver_earnings`
+--
+ALTER TABLE `driver_earnings`
+  MODIFY `Earning_ID_Pk` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `sysconfigsetup`

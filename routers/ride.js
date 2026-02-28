@@ -33,6 +33,9 @@ router.post('/review', authMiddleware, rideController.submitReview);
 // Get driver profile (Driver)
 router.get('/driver-profile', authMiddleware, rideController.getDriverProfile);
 
+// Get driver earnings (Driver) - list + summary
+router.get('/earnings', authMiddleware, rideController.getDriverEarnings);
+
 // Get recent addresses (User)
 router.get('/recent-addresses', authMiddleware, rideController.getRecentAddresses);
 
