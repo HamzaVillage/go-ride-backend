@@ -95,7 +95,12 @@ CREATE TABLE `drivers` (
   `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   `Rating` decimal(3,0) DEFAULT NULL,
   `Is_Online` tinyint(1) DEFAULT 0,
-  `Is_Available` tinyint(1) DEFAULT 1
+  `Is_Available` tinyint(1) DEFAULT 1,
+  `rides_limit` int(11) NOT NULL DEFAULT 0 COMMENT 'Rides limit threshold (from vehicle_fare_rate)',
+  `rides_over_limit_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Count of rides over the limit',
+  `rides_overdue_limit` decimal(10,2) NOT NULL DEFAULT 0.00 COMMENT 'Total driver earnings to date',
+  `rides_count_overdue_limit` int(11) NOT NULL DEFAULT 0 COMMENT 'Total completed ride count',
+  `overdue_since` datetime DEFAULT NULL COMMENT 'When driver first met limit; NULL = not overdue'
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
 
 -- --------------------------------------------------------
@@ -358,6 +363,8 @@ CREATE TABLE `vehicle_fare_rate` (
   `Maximum_Distance` decimal(6,2) DEFAULT 50.00 COMMENT 'Maximum allowed distance in km',
   `Currency` varchar(10) DEFAULT 'PKR',
   `Is_Active` tinyint(1) DEFAULT 1,
+  `rides_limit` int(11) NOT NULL DEFAULT 0 COMMENT 'Rides limit threshold (e.g. max rides per period)',
+  `rides_over_limit_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Count of rides over the limit',
   `CreatedAt` timestamp NOT NULL DEFAULT current_timestamp(),
   `UpdatedAt` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

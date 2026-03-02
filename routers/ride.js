@@ -33,6 +33,9 @@ router.post('/review', authMiddleware, rideController.submitReview);
 // Get driver profile (Driver)
 router.get('/driver-profile', authMiddleware, rideController.getDriverProfile);
 
+// Clear overdue (Driver) - after paying dues
+router.post('/clear-overdue', authMiddleware, rideController.clearOverdue);
+
 // Get driver earnings (Driver) - list + summary
 router.get('/earnings', authMiddleware, rideController.getDriverEarnings);
 

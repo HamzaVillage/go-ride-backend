@@ -106,10 +106,48 @@ const rideController = {
 
             // Derive driver info from JWT for security
             const [driverRows] = await conn.query(
-                "SELECT id, vehicle_type FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                "SELECT id, vehicle_type, overdue_since, rides_count_overdue_limit, rides_over_limit_count FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
                 [user.phone]
             );
-            const driverVehicleType = vehicle_type || (driverRows.length > 0 ? driverRows[0].vehicle_type : 'Mini');
+            if (driverRows.length === 0) {
+                return res.status(404).json({ success: false, message: "Driver profile not found" });
+            }
+            const driver = driverRows[0];
+            const driverVehicleType = vehicle_type || driver.vehicle_type || 'Mini';
+
+            // Check if driver meets limit (from vehicle_fare_rate); backfill overdue_since if needed
+            const totalRides = parseInt(driver.rides_count_overdue_limit || 0, 10);
+            const ridesOverLimit = parseInt(driver.rides_over_limit_count || 0, 10);
+            let vehicleRidesLimit = 0;
+            let vehicleRidesOverLimitCount = 0;
+            if (driver.vehicle_type) {
+                const [rateRows] = await conn.query(
+                    "SELECT rides_limit, rides_over_limit_count FROM vehicle_fare_rate WHERE Vehicle_Type = ? AND Is_Active = 1 LIMIT 1",
+                    [driver.vehicle_type]
+                );
+                vehicleRidesLimit = parseInt(rateRows[0]?.rides_limit ?? 0, 10);
+                vehicleRidesOverLimitCount = parseInt(rateRows[0]?.rides_over_limit_count ?? 0, 10);
+            }
+            const meetsLimit = (vehicleRidesLimit > 0 && totalRides >= vehicleRidesLimit) ||
+                (vehicleRidesOverLimitCount > 0 && ridesOverLimit >= vehicleRidesOverLimitCount);
+
+            if (meetsLimit) {
+                if (!driver.overdue_since) {
+                    await conn.query("UPDATE drivers SET overdue_since = NOW() WHERE id = ? AND overdue_since IS NULL", [driver.id]);
+                }
+                const [overdueCheck] = await conn.query(
+                    "SELECT TIMESTAMPDIFF(HOUR, overdue_since, NOW()) as hours_overdue FROM drivers WHERE id = ?",
+                    [driver.id]
+                );
+                const hoursOverdue = parseInt(overdueCheck[0]?.hours_overdue ?? 0, 10);
+                if (hoursOverdue >= 8) {
+                    return res.status(403).json({
+                        success: false,
+                        message: "Your account is blocked. Please clear your dues to continue finding rides.",
+                        blocked: true
+                    });
+                }
+            }
 
             const query = `
                 SELECT r.*, u.User_Name as rider_name,
@@ -341,6 +379,72 @@ const rideController = {
                 );
             } catch (earnErr) {
                 console.error("Driver earning insert (non-blocking):", earnErr.message);
+            }
+
+            // Update driver's rides_over_limit_count and rides_limit (from vehicle_fare_rate)
+            // Set overdue_since when driver meets limit (rides_count >= rides_limit OR rides_over_limit_count >= vehicle grace)
+            try {
+                const ride = rides[0];
+                const driverId = ride.Driver_ID_Fk;
+                const vehicleType = ride.Vehicle_Type || null;
+
+                const [completedCountRows] = await conn.query(
+                    "SELECT COUNT(*) as total FROM ride_history WHERE Driver_ID_Fk = ? AND Ride_Status = 'Completed'",
+                    [driverId]
+                );
+                const totalCompleted = parseInt(completedCountRows[0]?.total || 0, 10);
+
+                let ridesLimit = 0;
+                let vehicleRidesOverLimitCount = 0;
+                if (vehicleType) {
+                    const [rateRows] = await conn.query(
+                        "SELECT rides_limit, rides_over_limit_count FROM vehicle_fare_rate WHERE Vehicle_Type = ? AND Is_Active = 1 LIMIT 1",
+                        [vehicleType]
+                    );
+                    ridesLimit = parseInt(rateRows[0]?.rides_limit ?? 0, 10);
+                    vehicleRidesOverLimitCount = parseInt(rateRows[0]?.rides_over_limit_count ?? 0, 10);
+                }
+
+                const ridesOverLimitCount = ridesLimit > 0 ? Math.max(0, totalCompleted - ridesLimit) : 0;
+
+                await conn.query(
+                    "UPDATE drivers SET rides_over_limit_count = ?, rides_limit = ? WHERE id = ?",
+                    [ridesOverLimitCount, ridesLimit, driverId]
+                );
+
+                // Check if driver meets limit: total >= rides_limit OR over_limit_count >= vehicle grace
+                const meetsLimit = (ridesLimit > 0 && totalCompleted >= ridesLimit) ||
+                    (vehicleRidesOverLimitCount > 0 && ridesOverLimitCount >= vehicleRidesOverLimitCount);
+                if (meetsLimit) {
+                    await conn.query(
+                        "UPDATE drivers SET overdue_since = COALESCE(overdue_since, NOW()) WHERE id = ? AND overdue_since IS NULL",
+                        [driverId]
+                    );
+                }
+            } catch (driverUpdateErr) {
+                console.error("Driver rides_limit / rides_over_limit_count update (non-blocking):", driverUpdateErr.message);
+            }
+
+            // Update driver's aggregate totals:
+            // rides_overdue_limit        = total earnings
+            // rides_count_overdue_limit  = total completed rides
+            try {
+                const ride = rides[0];
+                const driverId = ride.Driver_ID_Fk;
+
+                const [aggRows] = await conn.query(
+                    "SELECT COUNT(*) as total_rides, COALESCE(SUM(Driver_Earning), 0) as total_earning FROM driver_earnings WHERE Driver_ID_Fk = ?",
+                    [driverId]
+                );
+                const totalRides = parseInt(aggRows[0]?.total_rides || 0, 10);
+                const totalEarning = parseFloat(aggRows[0]?.total_earning || 0);
+
+                await conn.query(
+                    "UPDATE drivers SET rides_count_overdue_limit = ?, rides_overdue_limit = ? WHERE id = ?",
+                    [totalRides, totalEarning, driverId]
+                );
+            } catch (driverTotalsErr) {
+                console.error("Driver overdue totals update (non-blocking):", driverTotalsErr.message);
             }
 
             const [completedRide] = await conn.query(
@@ -597,17 +701,14 @@ const rideController = {
     },
 
     getRideHistory: async (req, res) => {
-        const { status } = req.query;
+        const { status, limit, offset } = req.query;
         const user = req.user;
-        console.log(status, user);
         let conn;
         try {
             conn = await pool.getConnection();
 
-            let query = "SELECT * FROM ride_history WHERE ";
-            let queryParams = [];
-
             const isDriver = user.role && String(user.role).toLowerCase() === 'driver';
+            let rides = [];
 
             if (isDriver) {
                 const [driverRows] = await conn.query(
@@ -617,30 +718,64 @@ const rideController = {
                 if (driverRows.length === 0) {
                     return res.status(404).json({ success: false, message: "Driver profile not found" });
                 }
-                query += "Driver_ID_Fk = ? ";
-                queryParams.push(driverRows[0].id);
-            } else {
-                query += "User_ID_Fk = ? ";
-                queryParams.push(user.userId);
-            }
+                const driverId = driverRows[0].id;
 
-            if (status) {
-                const statusTrimmed = String(status).trim();
-                if (statusTrimmed.includes(',')) {
-                    const statusArray = statusTrimmed.split(',').map((s) => s.trim()).filter(Boolean);
-                    if (statusArray.length > 0) {
-                        query += `AND Ride_Status IN (${statusArray.map(() => '?').join(',')}) `;
-                        queryParams.push(...statusArray);
+                let statusClause = "";
+                const queryParams = [driverId];
+                if (status) {
+                    const statusTrimmed = String(status).trim();
+                    if (statusTrimmed.includes(',')) {
+                        const statusArray = statusTrimmed.split(',').map((s) => s.trim()).filter(Boolean);
+                        if (statusArray.length > 0) {
+                            statusClause = `AND r.Ride_Status IN (${statusArray.map(() => '?').join(',')}) `;
+                            queryParams.push(...statusArray);
+                        }
+                    } else {
+                        statusClause = "AND r.Ride_Status = ? ";
+                        queryParams.push(statusTrimmed);
                     }
-                } else {
-                    query += "AND Ride_Status = ? ";
-                    queryParams.push(statusTrimmed);
                 }
+
+                const limitVal = Math.min(parseInt(limit, 10) || 50, 100);
+                const offsetVal = Math.max(0, parseInt(offset, 10) || 0);
+
+                const [ridesRows] = await conn.query(
+                    `SELECT r.*, u.User_Name as rider_name, u.Mobile as rider_phone
+                     FROM ride_history r
+                     LEFT JOIN users u ON r.User_ID_Fk = u.User_ID_Pk
+                     WHERE r.Driver_ID_Fk = ? ${statusClause}
+                     ORDER BY r.CreatedAt DESC
+                     LIMIT ? OFFSET ?`,
+                    [...queryParams, limitVal, offsetVal]
+                );
+                rides = ridesRows;
+            } else {
+                let query = "SELECT * FROM ride_history WHERE User_ID_Fk = ? ";
+                const queryParams = [user.userId];
+
+                if (status) {
+                    const statusTrimmed = String(status).trim();
+                    if (statusTrimmed.includes(',')) {
+                        const statusArray = statusTrimmed.split(',').map((s) => s.trim()).filter(Boolean);
+                        if (statusArray.length > 0) {
+                            query += `AND Ride_Status IN (${statusArray.map(() => '?').join(',')}) `;
+                            queryParams.push(...statusArray);
+                        }
+                    } else {
+                        query += "AND Ride_Status = ? ";
+                        queryParams.push(statusTrimmed);
+                    }
+                }
+
+                query += "ORDER BY CreatedAt DESC";
+                const limitVal = Math.min(parseInt(limit, 10) || 50, 100);
+                const offsetVal = Math.max(0, parseInt(offset, 10) || 0);
+                query += " LIMIT ? OFFSET ?";
+                queryParams.push(limitVal, offsetVal);
+
+                const [ridesRows] = await conn.query(query, queryParams);
+                rides = ridesRows;
             }
-
-            query += "ORDER BY CreatedAt DESC";
-
-            const [rides] = await conn.query(query, queryParams);
 
             res.json({ success: true, count: rides.length, data: rides });
         } catch (err) {
@@ -774,6 +909,44 @@ const rideController = {
                 [driver.id]
             );
 
+            // Overdue status: compute from vehicle_fare_rate limits; backfill overdue_since if driver meets limit but it was never set
+            let overdue_info = null;
+            const totalRides = parseInt(driver.rides_count_overdue_limit || 0, 10);
+            const ridesOverLimit = parseInt(driver.rides_over_limit_count || 0, 10);
+            let vehicleRidesLimit = 0;
+            let vehicleRidesOverLimitCount = 0;
+            if (driver.vehicle_type) {
+                const [rateRows] = await conn.query(
+                    "SELECT rides_limit, rides_over_limit_count FROM vehicle_fare_rate WHERE Vehicle_Type = ? AND Is_Active = 1 LIMIT 1",
+                    [driver.vehicle_type]
+                );
+                vehicleRidesLimit = parseInt(rateRows[0]?.rides_limit ?? 0, 10);
+                vehicleRidesOverLimitCount = parseInt(rateRows[0]?.rides_over_limit_count ?? 0, 10);
+            }
+            const meetsLimit = (vehicleRidesLimit > 0 && totalRides >= vehicleRidesLimit) ||
+                (vehicleRidesOverLimitCount > 0 && ridesOverLimit >= vehicleRidesOverLimitCount);
+
+            if (meetsLimit) {
+                if (!driver.overdue_since) {
+                    await conn.query("UPDATE drivers SET overdue_since = NOW() WHERE id = ? AND overdue_since IS NULL", [driver.id]);
+                    driver.overdue_since = new Date().toISOString().slice(0, 19).replace('T', ' ');
+                }
+                const [overdueRows] = await conn.query(
+                    "SELECT TIMESTAMPDIFF(HOUR, overdue_since, NOW()) as hours_overdue, overdue_since FROM drivers WHERE id = ?",
+                    [driver.id]
+                );
+                const hoursOverdue = parseInt(overdueRows[0]?.hours_overdue ?? 0, 10);
+                const hoursRemaining = Math.max(0, 8 - hoursOverdue);
+                overdue_info = {
+                    overdue_since: overdueRows[0]?.overdue_since || driver.overdue_since,
+                    hours_overdue: hoursOverdue,
+                    hours_remaining: hoursRemaining,
+                    is_blocked: hoursOverdue >= 8,
+                    amount_due: parseFloat(driver.rides_overdue_limit || 0),
+                    rides_count: totalRides,
+                };
+            }
+
             res.json({
                 success: true,
                 driver: {
@@ -782,11 +955,47 @@ const rideController = {
                     avg_rating: reviewStats[0]?.avg_rating ? parseFloat(reviewStats[0].avg_rating).toFixed(1) : '0.0',
                     total_rides: rideStats[0]?.total_rides || 0,
                     completed_rides: rideStats[0]?.completed_rides || 0,
+                    overdue_info,
                 }
             });
         } catch (err) {
             console.error("Get Driver Profile Error:", err);
             res.status(500).json({ success: false, message: "Error fetching driver profile", error: err.message });
+        } finally {
+            if (conn) conn.release();
+        }
+    },
+
+    clearOverdue: async (req, res) => {
+        const user = req.user;
+        const isDriver = user.role && String(user.role).toLowerCase() === 'driver';
+        if (!isDriver) {
+            return res.status(403).json({ success: false, message: "Only drivers can clear overdue" });
+        }
+
+        let conn;
+        try {
+            conn = await pool.getConnection();
+
+            const [driverRows] = await conn.query(
+                "SELECT id FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                [user.phone]
+            );
+            if (driverRows.length === 0) {
+                return res.status(404).json({ success: false, message: "Driver profile not found" });
+            }
+            const driverId = driverRows[0].id;
+
+            await conn.query(
+                `UPDATE drivers SET overdue_since = NULL, rides_limit = 0, rides_over_limit_count = 0,
+                 rides_overdue_limit = 0, rides_count_overdue_limit = 0 WHERE id = ?`,
+                [driverId]
+            );
+
+            res.json({ success: true, message: "Overdue cleared. You can now find rides." });
+        } catch (err) {
+            console.error("Clear Overdue Error:", err);
+            res.status(500).json({ success: false, message: "Error clearing overdue", error: err.message });
         } finally {
             if (conn) conn.release();
         }
@@ -832,12 +1041,52 @@ const rideController = {
                 [driverId]
             );
 
+            const [driverInfo] = await conn.query(
+                "SELECT vehicle_type, overdue_since, rides_overdue_limit, rides_count_overdue_limit, rides_over_limit_count FROM drivers WHERE id = ?",
+                [driverId]
+            );
+            const d = driverInfo[0];
+            let overdue_info = null;
+            const totalRides = parseInt(d?.rides_count_overdue_limit || 0, 10);
+            const ridesOverLimit = parseInt(d?.rides_over_limit_count || 0, 10);
+            let vehicleRidesLimit = 0;
+            let vehicleRidesOverLimitCount = 0;
+            if (d?.vehicle_type) {
+                const [rateRows] = await conn.query(
+                    "SELECT rides_limit, rides_over_limit_count FROM vehicle_fare_rate WHERE Vehicle_Type = ? AND Is_Active = 1 LIMIT 1",
+                    [d.vehicle_type]
+                );
+                vehicleRidesLimit = parseInt(rateRows[0]?.rides_limit ?? 0, 10);
+                vehicleRidesOverLimitCount = parseInt(rateRows[0]?.rides_over_limit_count ?? 0, 10);
+            }
+            const meetsLimit = (vehicleRidesLimit > 0 && totalRides >= vehicleRidesLimit) ||
+                (vehicleRidesOverLimitCount > 0 && ridesOverLimit >= vehicleRidesOverLimitCount);
+
+            if (meetsLimit) {
+                if (!d?.overdue_since) {
+                    await conn.query("UPDATE drivers SET overdue_since = NOW() WHERE id = ? AND overdue_since IS NULL", [driverId]);
+                }
+                const [overdueRows] = await conn.query(
+                    "SELECT TIMESTAMPDIFF(HOUR, overdue_since, NOW()) as hours_overdue, overdue_since FROM drivers WHERE id = ?",
+                    [driverId]
+                );
+                const hoursOverdue = parseInt(overdueRows[0]?.hours_overdue ?? 0, 10);
+                overdue_info = {
+                    overdue_since: overdueRows[0]?.overdue_since || d?.overdue_since,
+                    hours_overdue: hoursOverdue,
+                    hours_remaining: Math.max(0, 8 - hoursOverdue),
+                    is_blocked: hoursOverdue >= 8,
+                    amount_due: parseFloat(d?.rides_overdue_limit || 0),
+                    rides_count: totalRides,
+                };
+            }
+
             const summary = {
                 total_rides: summaryRows[0]?.total_rides || 0,
                 total_earning: parseFloat(summaryRows[0]?.total_earning || 0),
             };
 
-            res.json({ success: true, data: rows, summary });
+            res.json({ success: true, data: rows, summary, overdue_info });
         } catch (err) {
             console.error("Get Driver Earnings Error:", err);
             res.status(500).json({ success: false, message: "Error fetching earnings", error: err.message });

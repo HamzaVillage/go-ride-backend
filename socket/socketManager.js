@@ -85,29 +85,61 @@ function initSocket(server) {
         socket.on("driver:online", async (data) => {
             try {
                 const { lat, lng, vehicle_type } = data || {};
-
-                if (!vehicle_type) {
-                    // Try to fetch from DB if not provided
-                    const conn = await pool.getConnection();
-                    try {
-                        const [rows] = await conn.query("SELECT vehicle_type FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')", [phone]);
-                        if (rows.length > 0) {
-                            const dbVehicleType = rows[0].vehicle_type?.toLowerCase();
-                            socket.join(`vehicle:${dbVehicleType}`);
-                            socket.driverInfo = { lat, lng, vehicle_type: dbVehicleType };
-                            console.log(`🚗 Driver ${userId} joined room vehicle:${dbVehicleType}`);
-                        }
-                    } finally {
-                        conn.release();
+                const conn = await pool.getConnection();
+                try {
+                    const [rows] = await conn.query(
+                        "SELECT id, vehicle_type, overdue_since, rides_count_overdue_limit, rides_over_limit_count FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                        [phone]
+                    );
+                    if (rows.length === 0) {
+                        socket.emit("driver:online:ack", { success: false, message: "Driver profile not found" });
+                        return;
                     }
-                } else {
-                    const normalizedType = vehicle_type.toLowerCase();
-                    socket.join(`vehicle:${normalizedType}`);
-                    socket.driverInfo = { lat, lng, vehicle_type: normalizedType };
-                    console.log(`🚗 Driver ${userId} joined room vehicle:${vehicle_type}`);
-                }
+                    const driver = rows[0];
+                    const dbVehicleType = (vehicle_type || driver.vehicle_type || 'mini').toLowerCase();
 
-                socket.emit("driver:online:ack", { success: true, message: "You are now online" });
+                    // Check if driver meets limit (from vehicle_fare_rate); backfill overdue_since if needed
+                    const totalRides = parseInt(driver.rides_count_overdue_limit || 0, 10);
+                    const ridesOverLimit = parseInt(driver.rides_over_limit_count || 0, 10);
+                    let vehicleRidesLimit = 0;
+                    let vehicleRidesOverLimitCount = 0;
+                    if (driver.vehicle_type) {
+                        const [rateRows] = await conn.query(
+                            "SELECT rides_limit, rides_over_limit_count FROM vehicle_fare_rate WHERE Vehicle_Type = ? AND Is_Active = 1 LIMIT 1",
+                            [driver.vehicle_type]
+                        );
+                        vehicleRidesLimit = parseInt(rateRows[0]?.rides_limit ?? 0, 10);
+                        vehicleRidesOverLimitCount = parseInt(rateRows[0]?.rides_over_limit_count ?? 0, 10);
+                    }
+                    const meetsLimit = (vehicleRidesLimit > 0 && totalRides >= vehicleRidesLimit) ||
+                        (vehicleRidesOverLimitCount > 0 && ridesOverLimit >= vehicleRidesOverLimitCount);
+
+                    if (meetsLimit) {
+                        if (!driver.overdue_since) {
+                            await conn.query("UPDATE drivers SET overdue_since = NOW() WHERE id = ? AND overdue_since IS NULL", [driver.id]);
+                        }
+                        const [overdueCheck] = await conn.query(
+                            "SELECT TIMESTAMPDIFF(HOUR, overdue_since, NOW()) as hours_overdue FROM drivers WHERE id = ?",
+                            [driver.id]
+                        );
+                        const hoursOverdue = parseInt(overdueCheck[0]?.hours_overdue ?? 0, 10);
+                        if (hoursOverdue >= 8) {
+                            socket.emit("driver:online:ack", {
+                                success: false,
+                                message: "Your account is blocked. Please clear your dues to continue finding rides.",
+                                blocked: true
+                            });
+                            return;
+                        }
+                    }
+
+                    socket.join(`vehicle:${dbVehicleType}`);
+                    socket.driverInfo = { lat, lng, vehicle_type: dbVehicleType };
+                    console.log(`🚗 Driver ${userId} joined room vehicle:${dbVehicleType}`);
+                    socket.emit("driver:online:ack", { success: true, message: "You are now online" });
+                } finally {
+                    conn.release();
+                }
             } catch (err) {
                 console.error("driver:online error:", err.message);
                 socket.emit("driver:online:ack", { success: false, message: err.message });
