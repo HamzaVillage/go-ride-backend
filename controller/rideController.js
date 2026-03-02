@@ -106,7 +106,7 @@ const rideController = {
 
             // Derive driver info from JWT for security
             const [driverRows] = await conn.query(
-                "SELECT id, vehicle_type, overdue_since, rides_count_overdue_limit, rides_over_limit_count FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                "SELECT id, vehicle_type, overdue_since, completed_rides_count FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
                 [user.phone]
             );
             if (driverRows.length === 0) {
@@ -115,9 +115,7 @@ const rideController = {
             const driver = driverRows[0];
             const driverVehicleType = vehicle_type || driver.vehicle_type || 'Mini';
 
-            // Check if driver meets limit (from vehicle_fare_rate); backfill overdue_since if needed
-            const totalRides = parseInt(driver.rides_count_overdue_limit || 0, 10);
-            const ridesOverLimit = parseInt(driver.rides_over_limit_count || 0, 10);
+            const totalRides = parseInt(driver.completed_rides_count || 0, 10);
             let vehicleRidesLimit = 0;
             let vehicleRidesOverLimitCount = 0;
             if (driver.vehicle_type) {
@@ -128,8 +126,9 @@ const rideController = {
                 vehicleRidesLimit = parseInt(rateRows[0]?.rides_limit ?? 0, 10);
                 vehicleRidesOverLimitCount = parseInt(rateRows[0]?.rides_over_limit_count ?? 0, 10);
             }
+            const ridesBeyondMax = vehicleRidesLimit > 0 ? Math.max(0, totalRides - vehicleRidesLimit) : 0;
             const meetsLimit = (vehicleRidesLimit > 0 && totalRides >= vehicleRidesLimit) ||
-                (vehicleRidesOverLimitCount > 0 && ridesOverLimit >= vehicleRidesOverLimitCount);
+                (vehicleRidesOverLimitCount > 0 && ridesBeyondMax >= vehicleRidesOverLimitCount);
 
             if (meetsLimit) {
                 if (!driver.overdue_since) {
@@ -381,18 +380,29 @@ const rideController = {
                 console.error("Driver earning insert (non-blocking):", earnErr.message);
             }
 
-            // Update driver's rides_over_limit_count and rides_limit (from vehicle_fare_rate)
-            // Set overdue_since when driver meets limit (rides_count >= rides_limit OR rides_over_limit_count >= vehicle grace)
+            // Update driver period totals (incremental). Limits from vehicle_fare_rate via JOIN when needed.
             try {
                 const ride = rides[0];
                 const driverId = ride.Driver_ID_Fk;
                 const vehicleType = ride.Vehicle_Type || null;
 
-                const [completedCountRows] = await conn.query(
-                    "SELECT COUNT(*) as total FROM ride_history WHERE Driver_ID_Fk = ? AND Ride_Status = 'Completed'",
+                // Increment the \"unpaid\" counters on drivers.
+                // These represent rides/earnings since last dues clear, NOT all-time totals.
+                const totalFare = parseFloat(ride.Fare || 0);
+                const orgFee = parseFloat(ride.Organization_Fee || 0);
+                const driverEarning = Math.max(0, totalFare - orgFee);
+
+                await conn.query(
+                    "UPDATE drivers SET completed_rides_count = completed_rides_count + 1, driver_earnings_sum = driver_earnings_sum + ? WHERE id = ?",
+                    [driverEarning, driverId]
+                );
+
+                // Read back current period totals to compare against limits
+                const [driverTotals] = await conn.query(
+                    "SELECT completed_rides_count FROM drivers WHERE id = ?",
                     [driverId]
                 );
-                const totalCompleted = parseInt(completedCountRows[0]?.total || 0, 10);
+                const totalRides = parseInt(driverTotals[0]?.completed_rides_count || 0, 10);
 
                 let ridesLimit = 0;
                 let vehicleRidesOverLimitCount = 0;
@@ -404,17 +414,9 @@ const rideController = {
                     ridesLimit = parseInt(rateRows[0]?.rides_limit ?? 0, 10);
                     vehicleRidesOverLimitCount = parseInt(rateRows[0]?.rides_over_limit_count ?? 0, 10);
                 }
-
-                const ridesOverLimitCount = ridesLimit > 0 ? Math.max(0, totalCompleted - ridesLimit) : 0;
-
-                await conn.query(
-                    "UPDATE drivers SET rides_over_limit_count = ?, rides_limit = ? WHERE id = ?",
-                    [ridesOverLimitCount, ridesLimit, driverId]
-                );
-
-                // Check if driver meets limit: total >= rides_limit OR over_limit_count >= vehicle grace
-                const meetsLimit = (ridesLimit > 0 && totalCompleted >= ridesLimit) ||
-                    (vehicleRidesOverLimitCount > 0 && ridesOverLimitCount >= vehicleRidesOverLimitCount);
+                const ridesBeyondMax = ridesLimit > 0 ? Math.max(0, totalRides - ridesLimit) : 0;
+                const meetsLimit = (ridesLimit > 0 && totalRides >= ridesLimit) ||
+                    (vehicleRidesOverLimitCount > 0 && ridesBeyondMax >= vehicleRidesOverLimitCount);
                 if (meetsLimit) {
                     await conn.query(
                         "UPDATE drivers SET overdue_since = COALESCE(overdue_since, NOW()) WHERE id = ? AND overdue_since IS NULL",
@@ -422,29 +424,7 @@ const rideController = {
                     );
                 }
             } catch (driverUpdateErr) {
-                console.error("Driver rides_limit / rides_over_limit_count update (non-blocking):", driverUpdateErr.message);
-            }
-
-            // Update driver's aggregate totals:
-            // rides_overdue_limit        = total earnings
-            // rides_count_overdue_limit  = total completed rides
-            try {
-                const ride = rides[0];
-                const driverId = ride.Driver_ID_Fk;
-
-                const [aggRows] = await conn.query(
-                    "SELECT COUNT(*) as total_rides, COALESCE(SUM(Driver_Earning), 0) as total_earning FROM driver_earnings WHERE Driver_ID_Fk = ?",
-                    [driverId]
-                );
-                const totalRides = parseInt(aggRows[0]?.total_rides || 0, 10);
-                const totalEarning = parseFloat(aggRows[0]?.total_earning || 0);
-
-                await conn.query(
-                    "UPDATE drivers SET rides_count_overdue_limit = ?, rides_overdue_limit = ? WHERE id = ?",
-                    [totalRides, totalEarning, driverId]
-                );
-            } catch (driverTotalsErr) {
-                console.error("Driver overdue totals update (non-blocking):", driverTotalsErr.message);
+                console.error("Driver totals/limit update (non-blocking):", driverUpdateErr.message);
             }
 
             const [completedRide] = await conn.query(
@@ -909,10 +889,9 @@ const rideController = {
                 [driver.id]
             );
 
-            // Overdue status: compute from vehicle_fare_rate limits; backfill overdue_since if driver meets limit but it was never set
+            // Overdue: get limits from vehicle_fare_rate (JOIN by vehicle_type), compute meetsLimit
             let overdue_info = null;
-            const totalRides = parseInt(driver.rides_count_overdue_limit || 0, 10);
-            const ridesOverLimit = parseInt(driver.rides_over_limit_count || 0, 10);
+            const totalRides = parseInt(driver.completed_rides_count || 0, 10);
             let vehicleRidesLimit = 0;
             let vehicleRidesOverLimitCount = 0;
             if (driver.vehicle_type) {
@@ -923,8 +902,9 @@ const rideController = {
                 vehicleRidesLimit = parseInt(rateRows[0]?.rides_limit ?? 0, 10);
                 vehicleRidesOverLimitCount = parseInt(rateRows[0]?.rides_over_limit_count ?? 0, 10);
             }
+            const ridesBeyondMax = vehicleRidesLimit > 0 ? Math.max(0, totalRides - vehicleRidesLimit) : 0;
             const meetsLimit = (vehicleRidesLimit > 0 && totalRides >= vehicleRidesLimit) ||
-                (vehicleRidesOverLimitCount > 0 && ridesOverLimit >= vehicleRidesOverLimitCount);
+                (vehicleRidesOverLimitCount > 0 && ridesBeyondMax >= vehicleRidesOverLimitCount);
 
             if (meetsLimit) {
                 if (!driver.overdue_since) {
@@ -942,7 +922,7 @@ const rideController = {
                     hours_overdue: hoursOverdue,
                     hours_remaining: hoursRemaining,
                     is_blocked: hoursOverdue >= 8,
-                    amount_due: parseFloat(driver.rides_overdue_limit || 0),
+                    amount_due: parseFloat(driver.driver_earnings_sum || 0),
                     rides_count: totalRides,
                 };
             }
@@ -987,8 +967,7 @@ const rideController = {
             const driverId = driverRows[0].id;
 
             await conn.query(
-                `UPDATE drivers SET overdue_since = NULL, rides_limit = 0, rides_over_limit_count = 0,
-                 rides_overdue_limit = 0, rides_count_overdue_limit = 0 WHERE id = ?`,
+                "UPDATE drivers SET overdue_since = NULL, driver_earnings_sum = 0, completed_rides_count = 0 WHERE id = ?",
                 [driverId]
             );
 
@@ -1042,13 +1021,12 @@ const rideController = {
             );
 
             const [driverInfo] = await conn.query(
-                "SELECT vehicle_type, overdue_since, rides_overdue_limit, rides_count_overdue_limit, rides_over_limit_count FROM drivers WHERE id = ?",
+                "SELECT vehicle_type, overdue_since, driver_earnings_sum, completed_rides_count FROM drivers WHERE id = ?",
                 [driverId]
             );
             const d = driverInfo[0];
             let overdue_info = null;
-            const totalRides = parseInt(d?.rides_count_overdue_limit || 0, 10);
-            const ridesOverLimit = parseInt(d?.rides_over_limit_count || 0, 10);
+            const totalRides = parseInt(d?.completed_rides_count || 0, 10);
             let vehicleRidesLimit = 0;
             let vehicleRidesOverLimitCount = 0;
             if (d?.vehicle_type) {
@@ -1059,8 +1037,9 @@ const rideController = {
                 vehicleRidesLimit = parseInt(rateRows[0]?.rides_limit ?? 0, 10);
                 vehicleRidesOverLimitCount = parseInt(rateRows[0]?.rides_over_limit_count ?? 0, 10);
             }
+            const ridesBeyondMax = vehicleRidesLimit > 0 ? Math.max(0, totalRides - vehicleRidesLimit) : 0;
             const meetsLimit = (vehicleRidesLimit > 0 && totalRides >= vehicleRidesLimit) ||
-                (vehicleRidesOverLimitCount > 0 && ridesOverLimit >= vehicleRidesOverLimitCount);
+                (vehicleRidesOverLimitCount > 0 && ridesBeyondMax >= vehicleRidesOverLimitCount);
 
             if (meetsLimit) {
                 if (!d?.overdue_since) {
@@ -1076,7 +1055,7 @@ const rideController = {
                     hours_overdue: hoursOverdue,
                     hours_remaining: Math.max(0, 8 - hoursOverdue),
                     is_blocked: hoursOverdue >= 8,
-                    amount_due: parseFloat(d?.rides_overdue_limit || 0),
+                    amount_due: parseFloat(d?.driver_earnings_sum || 0),
                     rides_count: totalRides,
                 };
             }

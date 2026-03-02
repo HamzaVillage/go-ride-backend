@@ -88,7 +88,7 @@ function initSocket(server) {
                 const conn = await pool.getConnection();
                 try {
                     const [rows] = await conn.query(
-                        "SELECT id, vehicle_type, overdue_since, rides_count_overdue_limit, rides_over_limit_count FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                        "SELECT id, vehicle_type, overdue_since, completed_rides_count FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
                         [phone]
                     );
                     if (rows.length === 0) {
@@ -98,9 +98,7 @@ function initSocket(server) {
                     const driver = rows[0];
                     const dbVehicleType = (vehicle_type || driver.vehicle_type || 'mini').toLowerCase();
 
-                    // Check if driver meets limit (from vehicle_fare_rate); backfill overdue_since if needed
-                    const totalRides = parseInt(driver.rides_count_overdue_limit || 0, 10);
-                    const ridesOverLimit = parseInt(driver.rides_over_limit_count || 0, 10);
+                    const totalRides = parseInt(driver.completed_rides_count || 0, 10);
                     let vehicleRidesLimit = 0;
                     let vehicleRidesOverLimitCount = 0;
                     if (driver.vehicle_type) {
@@ -111,8 +109,9 @@ function initSocket(server) {
                         vehicleRidesLimit = parseInt(rateRows[0]?.rides_limit ?? 0, 10);
                         vehicleRidesOverLimitCount = parseInt(rateRows[0]?.rides_over_limit_count ?? 0, 10);
                     }
+                    const ridesBeyondMax = vehicleRidesLimit > 0 ? Math.max(0, totalRides - vehicleRidesLimit) : 0;
                     const meetsLimit = (vehicleRidesLimit > 0 && totalRides >= vehicleRidesLimit) ||
-                        (vehicleRidesOverLimitCount > 0 && ridesOverLimit >= vehicleRidesOverLimitCount);
+                        (vehicleRidesOverLimitCount > 0 && ridesBeyondMax >= vehicleRidesOverLimitCount);
 
                     if (meetsLimit) {
                         if (!driver.overdue_since) {

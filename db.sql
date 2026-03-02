@@ -96,11 +96,9 @@ CREATE TABLE `drivers` (
   `Rating` decimal(3,0) DEFAULT NULL,
   `Is_Online` tinyint(1) DEFAULT 0,
   `Is_Available` tinyint(1) DEFAULT 1,
-  `rides_limit` int(11) NOT NULL DEFAULT 0 COMMENT 'Rides limit threshold (from vehicle_fare_rate)',
-  `rides_over_limit_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Count of rides over the limit',
-  `rides_overdue_limit` decimal(10,2) NOT NULL DEFAULT 0.00 COMMENT 'Total driver earnings to date',
-  `rides_count_overdue_limit` int(11) NOT NULL DEFAULT 0 COMMENT 'Total completed ride count',
-  `overdue_since` datetime DEFAULT NULL COMMENT 'When driver first met limit; NULL = not overdue'
+  `driver_earnings_sum` decimal(10,2) NOT NULL DEFAULT 0.00 COMMENT 'SUM(Driver_Earning) from driver_earnings',
+  `completed_rides_count` int(11) NOT NULL DEFAULT 0 COMMENT 'COUNT(*) from driver_earnings',
+  `overdue_since` datetime DEFAULT NULL COMMENT 'When limit first met; NULL = not overdue; >8h = blocked'
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
 
 -- --------------------------------------------------------
