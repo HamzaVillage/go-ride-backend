@@ -9,6 +9,7 @@ const fareRoutes = require('./routers/fare');
 const rideRoutes = require('./routers/ride');
 const addressRoutes = require('./routers/address');
 const sysConfigRoutes = require('./routers/sysConfig');
+const supportRoutes = require('./routers/support');
 
 const app = express();
 const server = http.createServer(app);
@@ -31,6 +32,7 @@ app.use("/fare", fareRoutes);
 app.use("/ride", rideRoutes);
 app.use("/address", addressRoutes);
 app.use("/sysconfig", sysConfigRoutes);
+app.use("/support", supportRoutes);
 
 
 // Start server
