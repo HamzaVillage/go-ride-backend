@@ -1,5 +1,6 @@
 const pool = require('../db/Connect_Db');
 const { getIO } = require('../socket/socketManager');
+const { notifyCustomer, notifyDriver } = require('../services/pushNotificationService');
 
 const rideController = {
     createRide: async (req, res) => {
@@ -250,6 +251,9 @@ const rideController = {
                 console.log(`📡 Emitting ride_accepted to ${rideRoom}`);
                 io.to(rideRoom).emit("ride_accepted", payload);
 
+                // Push notification to customer (await so send is attempted before response; errors must not affect ride flow)
+                try { await notifyCustomer(updatedRide[0].User_ID_Fk, 'Ride accepted', 'Your driver is on the way.', { ride_id: String(ride_id), event: 'ride_accepted' }); } catch (e) { console.warn('Push notify error:', e?.message); }
+
                 console.log(`📡 Emitting ride_unavailable to ${vehicleRoom}`);
                 io.to(vehicleRoom).emit("ride_unavailable", {
                     ride_id
@@ -301,14 +305,16 @@ const rideController = {
                 [cancelled_by, reason, ride_id]
             );
 
-            // Emit cancellation notification
+            // Emit cancellation notification + push
             try {
                 const io = getIO();
                 const cancelPayload = { ride_id, cancelled_by, reason, ride };
+                const pushData = { ride_id: String(ride_id), event: 'ride_cancelled' };
                 if (cancelled_by === 'Driver' && ride.User_ID_Fk) {
-                    // Driver cancelled → notify rider
+                    // Driver cancelled → notify rider (socket + push)
                     io.to(`user:${ride.User_ID_Fk}`).emit("ride_cancelled", cancelPayload);
                     io.to(`ride:${ride_id}`).emit("ride_cancelled", cancelPayload);
+                    try { await notifyCustomer(ride.User_ID_Fk, 'Ride cancelled', 'Your ride was cancelled.', pushData); } catch (e) { console.warn('Push notify error:', e?.message); }
                 } else if (cancelled_by === 'User') {
                     if (ride.Driver_ID_Fk) {
                         io.to(`ride:${ride_id}`).emit("ride_cancelled", cancelPayload);
@@ -322,9 +328,15 @@ const rideController = {
                                 io.to(`user:${userRows[0].User_ID_Pk}`).emit("ride_cancelled", cancelPayload);
                             }
                         }
+                        // Push: customer always gets cancel notification; driver gets it when customer cancelled
+                        try {
+                            await notifyCustomer(ride.User_ID_Fk, 'Ride cancelled', 'Your ride was cancelled.', pushData);
+                            await notifyDriver(ride.Driver_ID_Fk, 'Ride cancelled', 'The customer cancelled the ride.', pushData);
+                        } catch (e) { console.warn('Push notify error:', e?.message); }
                     } else {
-                        // Rider abandoned before acceptance → notify drivers in vehicle room
+                        // Rider abandoned before acceptance → notify drivers in vehicle room; push to customer only
                         io.to(`vehicle:${ride.Vehicle_Type}`).emit("ride_unavailable", { ride_id });
+                        try { await notifyCustomer(ride.User_ID_Fk, 'Ride cancelled', 'Your ride was cancelled.', pushData); } catch (e) { console.warn('Push notify error:', e?.message); }
                     }
                 }
             } catch (socketErr) {
@@ -449,6 +461,7 @@ const rideController = {
                     ride_id,
                     ride: completedRide[0]
                 });
+                try { await notifyCustomer(completedRide[0].User_ID_Fk, 'Ride completed', 'Thank you for riding with us.', { ride_id: String(ride_id), event: 'ride_completed' }); } catch (e) { console.warn('Push notify error:', e?.message); }
             } catch (socketErr) {
                 console.error("Socket emit error (non-blocking):", socketErr.message);
             }
@@ -499,6 +512,7 @@ const rideController = {
                 const io = getIO();
                 io.to(`user:${ride.User_ID_Fk || ''}`).emit("ride_started", { ride_id });
                 io.to(`ride:${ride_id}`).emit("ride_started", { ride_id });
+                try { await notifyCustomer(ride.User_ID_Fk, 'Ride started', 'Your ride has started.', { ride_id: String(ride_id), event: 'ride_started' }); } catch (e) { console.warn('Push notify error:', e?.message); }
             } catch (socketErr) {
                 console.error("Socket emit error (non-blocking):", socketErr.message);
             }
@@ -553,6 +567,7 @@ const rideController = {
                 const io = getIO();
                 io.to(`user:${ride.User_ID_Fk}`).emit("ride_arrived", { ride_id });
                 io.to(`ride:${ride_id}`).emit("ride_arrived", { ride_id });
+                try { await notifyCustomer(ride.User_ID_Fk, 'Driver arrived', 'Your driver has arrived at pickup.', { ride_id: String(ride_id), event: 'ride_arrived' }); } catch (e) { console.warn('Push notify error:', e?.message); }
             } catch (socketErr) {
                 console.error("Socket emit error:", socketErr.message);
             }

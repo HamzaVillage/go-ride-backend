@@ -214,19 +214,27 @@ const authController = {
         try {
             conn = await pool.getConnection();
             const normalizedPhone = phone.replace(/-/g, '');
-            const [rows] = await conn.query("SELECT * FROM users WHERE REPLACE(Mobile, '-', '') = ?", [normalizedPhone]);
+            // Customer login: only rider accounts (exclude driver so same phone = correct user)
+            const [rows] = await conn.query(
+                "SELECT * FROM users WHERE REPLACE(Mobile, '-', '') = ? AND (Role IS NULL OR LOWER(TRIM(Role)) != 'driver') ORDER BY User_ID_Pk ASC LIMIT 1",
+                [normalizedPhone]
+            );
             if (rows.length === 0) return res.status(401).json({ success: false, message: "Invalid credentials" });
 
             const user = rows[0];
-            const valid = await bcrypt.compare(password, user.Password);
-
+            const storedHash = user.Password != null ? String(user.Password) : '';
+            if (!storedHash) {
+                return res.status(400).json({
+                    success: false,
+                    message: "No password set for this account. Please use Forgot password to set one, or sign up again."
+                });
+            }
+            const valid = await bcrypt.compare(String(password), storedHash);
             if (!valid) return res.status(401).json({ success: false, message: "Invalid credentials" });
 
             await cleanupOTPs(pool);
             const otp = await sendSMS(normalizedPhone);
             const expires_at = new Date(Date.now() + 10 * 60 * 1000);
-
-            console.log("OTP:", otp);
 
             await conn.query(
                 "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?",

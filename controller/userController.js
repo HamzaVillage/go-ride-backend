@@ -71,9 +71,11 @@ const userController = {
                         "UPDATE drivers SET fcm_token = ?, fcm_token_updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                         [token, driverRows[0].id]
                     );
+                    console.log('🔔 [FCM] Token saved for driver id=', driverRows[0].id);
                 }
             }
 
+            console.log('🔔 [FCM] Token saved for userId=', userId, 'tokenPreview=', token.slice(0, 8) + '...' + token.slice(-8));
             res.json({ success: true, message: "FCM token updated" });
         } catch (err) {
             console.error("Update FCM Token Error:", err);
