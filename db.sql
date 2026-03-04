@@ -645,4 +645,16 @@ ALTER TABLE `vouchers`
 --
 ALTER TABLE `voucher_transactions`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- FCM token columns for push notifications (rider = users, driver = drivers)
+--
+ALTER TABLE `users`
+  ADD COLUMN `fcm_token` VARCHAR(512) DEFAULT NULL COMMENT 'Firebase Cloud Messaging token for push notifications',
+  ADD COLUMN `fcm_token_updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE current_timestamp();
+
+ALTER TABLE `drivers`
+  ADD COLUMN `fcm_token` VARCHAR(512) DEFAULT NULL COMMENT 'Firebase Cloud Messaging token for push notifications',
+  ADD COLUMN `fcm_token_updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE current_timestamp();
+
 COMMIT;

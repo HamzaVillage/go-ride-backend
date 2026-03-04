@@ -39,6 +39,48 @@ const userController = {
         } finally {
             if (conn) conn.release();
         }
+    },
+
+    updateFcmToken: async (req, res) => {
+        const userId = req.user.userId;
+        const role = req.user.role;
+        const phone = req.user.phone;
+        const { fcm_token } = req.body;
+
+        if (!fcm_token || typeof fcm_token !== 'string' || !fcm_token.trim()) {
+            return res.status(400).json({ success: false, message: "fcm_token is required" });
+        }
+
+        const token = fcm_token.trim();
+        let conn;
+        try {
+            conn = await pool.getConnection();
+            await conn.query(
+                "UPDATE users SET fcm_token = ?, fcm_token_updated_at = CURRENT_TIMESTAMP WHERE User_ID_Pk = ?",
+                [token, userId]
+            );
+
+            if (role === 'driver' && phone) {
+                const normalizedPhone = String(phone).replace(/-/g, '');
+                const [driverRows] = await conn.query(
+                    "SELECT id FROM drivers WHERE REPLACE(phone, '-', '') = ?",
+                    [normalizedPhone]
+                );
+                if (driverRows.length > 0) {
+                    await conn.query(
+                        "UPDATE drivers SET fcm_token = ?, fcm_token_updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        [token, driverRows[0].id]
+                    );
+                }
+            }
+
+            res.json({ success: true, message: "FCM token updated" });
+        } catch (err) {
+            console.error("Update FCM Token Error:", err);
+            res.status(500).json({ success: false, message: "Error updating FCM token", error: err.message });
+        } finally {
+            if (conn) conn.release();
+        }
     }
 };
 
