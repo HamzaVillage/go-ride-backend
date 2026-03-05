@@ -240,7 +240,7 @@ const authController = {
                 "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?",
                 [normalizedPhone, otp, expires_at, 'login', otp, expires_at, 'login']
             );
-
+            console.log("OTP:", otp);
             res.json({
                 success: true,
                 message: "Credentials valid. OTP sent for verification."
