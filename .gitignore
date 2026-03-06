@@ -1,7 +1,5 @@
 /node_modules
-
-# Firebase / Google Cloud service account key - never commit
-config/*firebase*adminsdk*.json
+config/*.json
 .env
 .env.*
-!.env.exampleconfig/*.json
+!.env.example
