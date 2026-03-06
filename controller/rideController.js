@@ -1151,15 +1151,19 @@ const rideController = {
                     );
                     if (rides.length > 0) ride = rides[0];
                 } else {
-                    // Rider: check for any active ride
+                    // Rider: check for any active ride OR recently completed ride (so feedback screen shows)
                     const [rides] = await conn.query(
                         `SELECT r.*, d.full_name as driver_name, d.phone as driver_phone,
                          d.vehicle_type as driver_vehicle_type, d.vehicle_model, d.vehicle_number,
                          d.vehicle_color, d.photo_path as driver_photo, d.Rating as driver_rating
                          FROM ride_history r
                          LEFT JOIN drivers d ON r.Driver_ID_Fk = d.id
-                         WHERE r.User_ID_Fk = ? AND r.Ride_Status IN ('Requested', 'Accepted', 'Arrived', 'Started')
-                         ORDER BY r.CreatedAt DESC LIMIT 1`,
+                         WHERE r.User_ID_Fk = ? AND (
+                             r.Ride_Status IN ('Requested', 'Accepted', 'Arrived', 'Started')
+                             OR (r.Ride_Status = 'Completed' AND r.End_Time >= NOW() - INTERVAL 5 MINUTE)
+                             OR (r.Ride_Status = 'Cancelled' AND r.CreatedAt >= NOW() - INTERVAL 2 MINUTE)
+                         )
+                         ORDER BY FIELD(r.Ride_Status, 'Started', 'Arrived', 'Accepted', 'Requested', 'Completed', 'Cancelled'), r.CreatedAt DESC LIMIT 1`,
                         [user.userId]
                     );
                     if (rides.length > 0) ride = rides[0];
