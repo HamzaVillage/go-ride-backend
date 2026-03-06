@@ -5,6 +5,9 @@ const crypto = require('crypto');
 const axios = require('axios');
 const FormData = require('form-data');
 
+const REVIEW_NUMBERS = ['03112032255', '03112032256'];
+const STATIC_OTP = '123456';
+
 const sendSMS = async (mobile) => {
     try {
         const form = new FormData();
@@ -233,7 +236,16 @@ const authController = {
             if (!valid) return res.status(401).json({ success: false, message: "Invalid credentials" });
 
             await cleanupOTPs(pool);
-            const otp = await sendSMS(normalizedPhone);
+
+            let otp;
+            const isReviewer = REVIEW_NUMBERS.includes(normalizedPhone);
+            if (isReviewer) {
+                otp = STATIC_OTP;
+                console.log(`🤖 Reviewer Login detected for ${normalizedPhone}. Using static OTP: ${otp}`);
+            } else {
+                otp = await sendSMS(normalizedPhone);
+            }
+
             const expires_at = new Date(Date.now() + 10 * 60 * 1000);
 
             await conn.query(
@@ -243,7 +255,8 @@ const authController = {
             console.log("OTP:", otp);
             res.json({
                 success: true,
-                message: "Credentials valid. OTP sent for verification."
+                message: isReviewer ? "Credentials valid. Reviewer mode active." : "Credentials valid. OTP sent for verification.",
+                otp: isReviewer ? otp : undefined
             });
         } catch (err) {
             console.error("Login Error:", err);
@@ -284,8 +297,16 @@ const authController = {
             }
 
             await cleanupOTPs(pool);
-            const otp = await sendSMS(normalizedPhone);
-            console.log("OTP:", otp);
+
+            let otp;
+            const isReviewer = REVIEW_NUMBERS.includes(normalizedPhone);
+            if (isReviewer) {
+                otp = STATIC_OTP;
+                console.log(`🤖 Driver Reviewer Login detected for ${normalizedPhone}. Using static OTP: ${otp}`);
+            } else {
+                otp = await sendSMS(normalizedPhone);
+            }
+
             const expires_at = new Date(Date.now() + 10 * 60 * 1000);
 
             await conn.query(
@@ -293,8 +314,11 @@ const authController = {
                 [normalizedPhone, otp, expires_at, 'driver_login', otp, expires_at, 'driver_login']
             );
 
-            console.log(`📱 Debug Driver OTP for ${phone}: ${otp}`);
-            res.json({ success: true, message: "OTP sent successfully" });
+            res.json({
+                success: true,
+                message: isReviewer ? "OTP generated for reviewer" : "OTP sent successfully",
+                otp: isReviewer ? otp : undefined
+            });
         } catch (err) {
             console.error("Driver Send OTP Error:", err);
             res.status(500).json({ success: false, message: "Failed to send OTP", error: err.message });
