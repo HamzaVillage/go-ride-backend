@@ -88,7 +88,7 @@
                                 "login"
                             ]
                         },
-                        "description": "Validates credentials and sends an OTP to the mobile number for login completion."
+                        "description": "Validates credentials and sends an OTP to the mobile number for login completion. \n\n**Reviewer Note:** Use phone `03112032255` (customer) or `03112032256` (driver) to bypass real SMS and get an automatic OTP '123456'."
                     },
                     "response": []
                 },
@@ -130,7 +130,7 @@
                                 "verify-otp"
                             ]
                         },
-                        "description": "Verifies the OTP and completes the authentication process (Registration or Login). Returns JWT token and User/Driver data."
+                        "description": "Verifies the OTP and completes the authentication process (Registration or Login). Returns JWT token and User/Driver data.\n\n**Reviewer Note:** For reviewer accounts, use OTP `123456`."
                     },
                     "response": []
                 },
@@ -359,7 +359,7 @@
                             }
                         ],
                         "url": {
-                            "raw": "{{base_url}}/ride/nearby?driver_lat=24.9000&driver_lng=67.1600&driver_id=5",
+                            "raw": "{{base_url}}/ride/nearby?driver_lat=24.9000&driver_lng=67.1600&vehicle_type=Mini",
                             "host": [
                                 "{{base_url}}"
                             ],
@@ -377,8 +377,9 @@
                                     "value": "67.1600"
                                 },
                                 {
-                                    "key": "driver_id",
-                                    "value": "5"
+                                    "key": "vehicle_type",
+                                    "value": "Mini",
+                                    "description": "Optional: Mini, AC, Rickshaw, Bike"
                                 }
                             ]
                         }
@@ -414,7 +415,42 @@
                                 "ride",
                                 "accept"
                             ]
-                        }
+                        },
+                        "description": "Accepts a ride request. Driver ID is determined from the Authorization token."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Mark Arrived (Driver)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{auth_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"ride_id\": 1\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/ride/mark-arrived",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "ride",
+                                "mark-arrived"
+                            ]
+                        },
+                        "description": "Marks the driver as arrived at the pickup location."
                     },
                     "response": []
                 },
@@ -607,6 +643,149 @@
                         "description": "Returns unique recent drop-off locations for the logged-in rider."
                     },
                     "response": []
+                },
+                {
+                    "name": "Get Active Ride (Recovery)",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{auth_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/ride/active",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "ride",
+                                "active"
+                            ]
+                        },
+                        "description": "Checks for any active or recently completed/cancelled ride for the logged-in user or driver. Used for ride recovery on app foreground/reconnect."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Submit Review",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{auth_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"ride_id\": 1,\n    \"rating\": 5,\n    \"feedback_tags\": \"Excellent Service, Clean Car\",\n    \"comment\": \"Great driver, very professional.\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/ride/review",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "ride",
+                                "review"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Get Driver Profile",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{auth_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/ride/driver-profile",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "ride",
+                                "driver-profile"
+                            ]
+                        },
+                        "description": "Returns the driver's profile, including ratings, completed rides, and overdue information."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Get Driver Earnings",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{auth_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/ride/earnings?limit=50&offset=0",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "ride",
+                                "earnings"
+                            ],
+                            "query": [
+                                {
+                                    "key": "limit",
+                                    "value": "50"
+                                },
+                                {
+                                    "key": "offset",
+                                    "value": "0"
+                                }
+                            ]
+                        },
+                        "description": "Returns a detailed list of ride earnings for the driver."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Clear Overdue (Driver)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{auth_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/ride/clear-overdue",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "ride",
+                                "clear-overdue"
+                            ]
+                        },
+                        "description": "Clears the driver's overdue status after dues are settled."
+                    },
+                    "response": []
                 }
             ]
         },
@@ -771,6 +950,39 @@
                                 "get-config"
                             ]
                         }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "Admin",
+            "item": [
+                {
+                    "name": "Send Notification",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"target\": \"role\",\n    \"role\": \"driver\",\n    \"title\": \"Update Available\",\n    \"body\": \"Please update your app to the latest version for new features!\",\n    \"data\": {\n        \"type\": \"admin_update\"\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/notification/send",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "notification",
+                                "send"
+                            ]
+                        },
+                        "description": "Sends a push notification to users or drivers.\n\n**Targets:**\n- `all`: Everyone with a valid FCM token.\n- `role`: Specify `role` as `rider` or `driver`.\n- `specific`: Specify `userId` and `isDriver` (bool)."
                     },
                     "response": []
                 }
