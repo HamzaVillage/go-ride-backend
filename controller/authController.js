@@ -225,6 +225,16 @@ const authController = {
             if (rows.length === 0) return res.status(401).json({ success: false, message: "Invalid credentials" });
 
             const user = rows[0];
+
+            // Check if account is deleted
+            if (user.AccountDeleted === 1 || user.AccountDeleted === true) {
+                return res.status(403).json({
+                    success: false,
+                    account_deleted: true,
+                    message: "Your account has been deleted. Please appeal to recover your account."
+                });
+            }
+
             const storedHash = user.Password != null ? String(user.Password) : '';
             if (!storedHash) {
                 return res.status(400).json({
@@ -292,6 +302,20 @@ const authController = {
             }
 
             const driver = driverRows[0];
+
+            // Check if account is deleted (AccountDeleted lives in users table)
+            const [userRows] = await conn.query(
+                "SELECT AccountDeleted FROM users WHERE REPLACE(Mobile, '-', '') = ? LIMIT 1",
+                [normalizedPhone]
+            );
+            if (userRows.length > 0 && (userRows[0].AccountDeleted === 1 || userRows[0].AccountDeleted === true)) {
+                return res.status(403).json({
+                    success: false,
+                    account_deleted: true,
+                    message: "Your account has been deleted. Please appeal to recover your account."
+                });
+            }
+
             if (driver.status === 'blocked' || driver.status === 'inactive') {
                 return res.status(403).json({ success: false, message: `Your account is ${driver.status}. Please contact support.` });
             }
