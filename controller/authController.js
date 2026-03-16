@@ -55,9 +55,11 @@ const authController = {
             let conn;
             try {
                 conn = await pool.getConnection();
+                // Delete any existing OTP for this phone+purpose to prevent duplicates
+                await conn.query("DELETE FROM otp_verifications WHERE phone_number = ? AND purpose = ?", [normalizedPhone, 'general']);
                 await conn.query(
-                    "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?",
-                    [normalizedPhone, otp, expires_at, 'general', otp, expires_at, 'general']
+                    "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?)",
+                    [normalizedPhone, otp, expires_at, 'general']
                 );
 
                 res.json({ success: true, message: "OTP sent successfully" });
@@ -191,9 +193,11 @@ const authController = {
 
             const payload = JSON.stringify({ full_name, email, password: hashedPassword });
 
+            // Delete any existing OTP for this phone+purpose to prevent duplicates
+            await conn.query("DELETE FROM otp_verifications WHERE phone_number = ? AND purpose = ?", [normalizedPhone, 'register']);
             await conn.query(
-                "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose, payload) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?, payload = ?",
-                [normalizedPhone, otp, expires_at, 'register', payload, otp, expires_at, 'register', payload]
+                "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose, payload) VALUES (?, ?, ?, ?, ?)",
+                [normalizedPhone, otp, expires_at, 'register', payload]
             );
 
             res.status(200).json({
@@ -258,9 +262,11 @@ const authController = {
 
             const expires_at = new Date(Date.now() + 10 * 60 * 1000);
 
+            // Delete any existing OTP for this phone+purpose to prevent duplicates
+            await conn.query("DELETE FROM otp_verifications WHERE phone_number = ? AND purpose = ?", [normalizedPhone, 'login']);
             await conn.query(
-                "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?",
-                [normalizedPhone, otp, expires_at, 'login', otp, expires_at, 'login']
+                "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?)",
+                [normalizedPhone, otp, expires_at, 'login']
             );
             console.log("OTP:", otp);
             res.json({
@@ -333,9 +339,11 @@ const authController = {
 
             const expires_at = new Date(Date.now() + 10 * 60 * 1000);
 
+            // Delete any existing OTP for this phone+purpose to prevent duplicates
+            await conn.query("DELETE FROM otp_verifications WHERE phone_number = ? AND purpose = ?", [normalizedPhone, 'driver_login']);
             await conn.query(
-                "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?",
-                [normalizedPhone, otp, expires_at, 'driver_login', otp, expires_at, 'driver_login']
+                "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?)",
+                [normalizedPhone, otp, expires_at, 'driver_login']
             );
 
             res.json({
@@ -451,9 +459,11 @@ const authController = {
             const otp = await sendSMS(normalizedPhone);
             const expires_at = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
+            // Delete any existing OTP for this phone+purpose to prevent duplicates
+            await conn.query("DELETE FROM otp_verifications WHERE phone_number = ? AND purpose = ?", [normalizedPhone, 'forgot_password']);
             await conn.query(
-                "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE otp_hash = ?, expires_at = ?, verified = 0, attempts = 0, purpose = ?",
-                [normalizedPhone, otp, expires_at, 'forgot_password', otp, expires_at, 'forgot_password']
+                "INSERT INTO otp_verifications (phone_number, otp_hash, expires_at, purpose) VALUES (?, ?, ?, ?)",
+                [normalizedPhone, otp, expires_at, 'forgot_password']
             );
 
             res.json({ success: true, message: "Reset OTP sent successfully" });
