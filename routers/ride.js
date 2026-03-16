@@ -48,4 +48,13 @@ router.get('/history', authMiddleware, rideController.getRideHistory);
 // Get active ride for ride recovery on app restart (User/Driver)
 router.get('/active', authMiddleware, rideController.getActiveRide);
 
+// Generate a shareable tracking link for a ride (User)
+router.post('/share-link', authMiddleware, rideController.generateShareLink);
+
+// Web redirect page for shared tracking links (clickable on WhatsApp/SMS)
+router.get('/track/:token', rideController.trackRedirectPage);
+
+// Public ride tracking JSON API (no auth) — used by the app's TrackRideScreen
+router.get('/public/:token', rideController.getPublicRideTracking);
+
 module.exports = router;

@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const pool = require('../db/Connect_Db');
 const { getIO } = require('../socket/socketManager');
 const { notifyCustomer, notifyDriver } = require('../services/pushNotificationService');
@@ -1194,6 +1195,193 @@ const rideController = {
                 console.error("Get Active Ride Error:", err);
                 return res.status(500).json({ success: false, message: "Error checking active ride", error: err.message });
             }
+        }
+    },
+
+    /**
+     * POST /ride/share-link
+     * Generates (or returns existing) share_token for a ride owned by the caller.
+     * Body: { ride_id }
+     * Returns: { success, token }
+     */
+    generateShareLink: async (req, res) => {
+        let conn;
+        try {
+            const { ride_id } = req.body;
+            const userId = req.user.userId;
+            if (!ride_id) return res.status(400).json({ success: false, message: 'ride_id is required' });
+
+            conn = await pool.getConnection();
+
+            const [rows] = await conn.query(
+                "SELECT Ride_ID_Pk, User_ID_Fk, share_token FROM ride_history WHERE Ride_ID_Pk = ?",
+                [ride_id]
+            );
+            if (rows.length === 0) {
+                conn.release();
+                return res.status(404).json({ success: false, message: 'Ride not found' });
+            }
+            const ride = rows[0];
+
+            if (ride.User_ID_Fk !== userId) {
+                conn.release();
+                return res.status(403).json({ success: false, message: 'You can only share your own ride' });
+            }
+
+            let token = ride.share_token;
+            if (!token) {
+                token = crypto.randomBytes(32).toString('hex');
+                await conn.query("UPDATE ride_history SET share_token = ? WHERE Ride_ID_Pk = ?", [token, ride_id]);
+            }
+
+            conn.release();
+            return res.json({ success: true, token });
+        } catch (err) {
+            if (conn) conn.release();
+            console.error("Generate Share Link Error:", err);
+            return res.status(500).json({ success: false, message: 'Error generating share link', error: err.message });
+        }
+    },
+
+    /**
+     * GET /ride/track/:token
+     * Serves an HTML redirect page — tries to open the GoRide app,
+     * otherwise shows ride info in the browser. This URL is WhatsApp-friendly.
+     */
+    trackRedirectPage: async (req, res) => {
+        let conn;
+        try {
+            const { token } = req.params;
+            if (!token || token.length < 16) {
+                return res.status(400).send('Invalid tracking link.');
+            }
+
+            conn = await pool.getConnection();
+            const [rides] = await conn.query(
+                `SELECT r.Ride_ID_Pk, r.Ride_Status, r.Pickup_Location, r.Drop_Location,
+                        d.full_name AS driver_name, d.vehicle_model, d.vehicle_number,
+                        d.vehicle_color, d.Rating AS driver_rating
+                 FROM ride_history r
+                 LEFT JOIN drivers d ON r.Driver_ID_Fk = d.id
+                 WHERE r.share_token = ?
+                 LIMIT 1`,
+                [token]
+            );
+            conn.release();
+
+            if (rides.length === 0) {
+                return res.status(404).send('Ride not found or link has expired.');
+            }
+
+            const ride = rides[0];
+            const deepLink = `goride://track?token=${token}`;
+            const statusMap = {
+                Accepted: 'Driver is on the way',
+                Arrived: 'Driver has arrived',
+                Started: 'Ride in progress',
+                Completed: 'Ride completed',
+                Cancelled: 'Ride was cancelled',
+            };
+            const statusLabel = statusMap[ride.Ride_Status] || ride.Ride_Status;
+
+            const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Track Ride - GoRide</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0D0D0D;color:#fff;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px}
+.card{background:#1A1A1A;border-radius:20px;padding:28px;max-width:380px;width:100%;text-align:center}
+.logo{font-size:28px;font-weight:800;color:#22E843;margin-bottom:6px}
+.subtitle{color:#888;font-size:13px;margin-bottom:24px}
+.status{display:inline-block;background:rgba(34,232,67,0.12);color:#22E843;padding:6px 16px;border-radius:20px;font-size:13px;font-weight:600;margin-bottom:20px}
+.driver{display:flex;align-items:center;gap:12px;text-align:left;margin-bottom:16px;padding:12px;background:#252525;border-radius:12px}
+.avatar{width:44px;height:44px;border-radius:22px;background:#333;display:flex;align-items:center;justify-content:center;font-size:20px}
+.dname{font-weight:600;font-size:15px}
+.dmeta{color:#888;font-size:12px;margin-top:2px}
+.loc{text-align:left;padding:10px 12px;background:#252525;border-radius:12px;margin-bottom:8px}
+.loc .label{color:#888;font-size:11px;margin-bottom:3px}
+.loc .addr{font-size:13px;line-height:1.4}
+.btn{display:block;width:100%;padding:14px;border:none;border-radius:14px;font-size:16px;font-weight:700;cursor:pointer;margin-top:18px;text-decoration:none;color:#0D0D0D;background:linear-gradient(135deg,#22E843,#1BCC3A)}
+.note{color:#666;font-size:11px;margin-top:14px;line-height:1.4}
+</style>
+</head>
+<body>
+<div class="card">
+ <div class="logo">GoRide</div>
+ <div class="subtitle">Live Ride Tracking</div>
+ <div class="status">${statusLabel}</div>
+ ${ride.driver_name ? `
+ <div class="driver">
+  <div class="avatar">🚗</div>
+  <div>
+   <div class="dname">${ride.driver_name}</div>
+   <div class="dmeta">${[ride.vehicle_model, ride.vehicle_color, ride.vehicle_number].filter(Boolean).join(' • ')}${ride.driver_rating ? ' ★ ' + Number(ride.driver_rating).toFixed(1) : ''}</div>
+  </div>
+ </div>` : ''}
+ <div class="loc"><div class="label">Pickup</div><div class="addr">${ride.Pickup_Location || '-'}</div></div>
+ <div class="loc"><div class="label">Destination</div><div class="addr">${ride.Drop_Location || '-'}</div></div>
+ <a href="${deepLink}" class="btn" id="openApp">Open in GoRide App</a>
+ <p class="note">If the app doesn't open automatically, make sure GoRide is installed on your device.</p>
+</div>
+<script>
+setTimeout(function(){ window.location.href = "${deepLink}"; }, 600);
+</script>
+</body>
+</html>`;
+
+            res.setHeader('Content-Type', 'text/html');
+            return res.send(html);
+        } catch (err) {
+            if (conn) conn.release();
+            console.error("Track Redirect Page Error:", err);
+            return res.status(500).send('Something went wrong.');
+        }
+    },
+
+    /**
+     * GET /ride/public/:token
+     * Public (no auth required) — returns ride + driver details for tracking.
+     */
+    getPublicRideTracking: async (req, res) => {
+        let conn;
+        try {
+            const { token } = req.params;
+            if (!token || token.length < 16) {
+                return res.status(400).json({ success: false, message: 'Invalid tracking token' });
+            }
+
+            conn = await pool.getConnection();
+
+            const [rides] = await conn.query(
+                `SELECT r.Ride_ID_Pk, r.Ride_Status, r.Pickup_Location, r.Drop_Location,
+                        r.Pickup_Lat, r.Pickup_Lng, r.Drop_Lat, r.Drop_Lng,
+                        r.Vehicle_Type, r.Fare, r.Distance, r.Duration,
+                        d.full_name AS driver_name, d.phone AS driver_phone,
+                        d.vehicle_type AS driver_vehicle_type, d.vehicle_model,
+                        d.vehicle_number, d.vehicle_color, d.Rating AS driver_rating,
+                        d.photo_path AS driver_photo
+                 FROM ride_history r
+                 LEFT JOIN drivers d ON r.Driver_ID_Fk = d.id
+                 WHERE r.share_token = ?
+                 LIMIT 1`,
+                [token]
+            );
+
+            conn.release();
+
+            if (rides.length === 0) {
+                return res.status(404).json({ success: false, message: 'Ride not found or link expired' });
+            }
+
+            const ride = rides[0];
+            return res.json({ success: true, ride });
+        } catch (err) {
+            if (conn) conn.release();
+            console.error("Public Ride Tracking Error:", err);
+            return res.status(500).json({ success: false, message: 'Error fetching ride tracking', error: err.message });
         }
     }
 };

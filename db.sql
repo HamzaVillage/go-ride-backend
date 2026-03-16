@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: localhost
--- Generation Time: Feb 28, 2026 at 08:28 PM
+-- Generation Time: Mar 16, 2026 at 06:38 PM
 -- Server version: 10.5.29-MariaDB
 -- PHP Version: 8.5.1
 
@@ -14,6 +14,52 @@ SET time_zone = "+00:00";
 --
 -- Database: `GO_DB_KINPL_LUCIDITY`
 --
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `appeal_restore`
+--
+
+CREATE TABLE `appeal_restore` (
+  `restore_id` int(11) NOT NULL,
+  `user_name` varchar(100) NOT NULL,
+  `email` varchar(255) NOT NULL,
+  `password_hash` varchar(255) NOT NULL,
+  `restore_message` text DEFAULT NULL,
+  `restore_status` enum('pending','approved','rejected') DEFAULT 'pending',
+  `ip_address` varchar(45) DEFAULT NULL,
+  `user_agent` text DEFAULT NULL,
+  `created_at` datetime DEFAULT current_timestamp(),
+  `updated_at` datetime DEFAULT NULL ON UPDATE current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `area`
+--
+
+CREATE TABLE `area` (
+  `ID_PK` int(11) NOT NULL,
+  `Area_Name` varchar(50) NOT NULL,
+  `City_Name` varchar(80) NOT NULL,
+  `Status` enum('active','inactive') NOT NULL DEFAULT 'active',
+  `Created_At` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `city`
+--
+
+CREATE TABLE `city` (
+  `ID_PK` int(11) NOT NULL,
+  `City_Code` varchar(5) NOT NULL,
+  `City_Name` varchar(80) NOT NULL,
+  `Country` varchar(80) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
 
 -- --------------------------------------------------------
 
@@ -59,12 +105,27 @@ CREATE TABLE `company` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `contact_us_info`
+--
+
+CREATE TABLE `contact_us_info` (
+  `id` int(11) NOT NULL,
+  `address` text NOT NULL,
+  `phone` varchar(50) NOT NULL,
+  `email` varchar(100) NOT NULL,
+  `is_active` tinyint(4) DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `drivers`
 --
 
 CREATE TABLE `drivers` (
   `id` int(11) NOT NULL,
   `User_ID_FK` int(11) DEFAULT NULL,
+  `Franchiser_ID_FK` int(11) DEFAULT NULL,
   `driver_code` varchar(20) DEFAULT NULL,
   `full_name` varchar(100) DEFAULT NULL,
   `father_name` varchar(100) DEFAULT NULL,
@@ -98,8 +159,135 @@ CREATE TABLE `drivers` (
   `Is_Available` tinyint(1) DEFAULT 1,
   `driver_earnings_sum` decimal(10,2) NOT NULL DEFAULT 0.00 COMMENT 'SUM(Driver_Earning) from driver_earnings',
   `completed_rides_count` int(11) NOT NULL DEFAULT 0 COMMENT 'COUNT(*) from driver_earnings',
-  `overdue_since` datetime DEFAULT NULL COMMENT 'When limit first met; NULL = not overdue; >8h = blocked'
+  `overdue_since` datetime DEFAULT NULL COMMENT 'When driver first met limit; NULL = not overdue',
+  `fcm_token` varchar(512) DEFAULT NULL COMMENT 'Firebase Cloud Messaging token for push notifications',
+  `fcm_token_updated_at` timestamp NULL DEFAULT NULL ON UPDATE current_timestamp()
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `driver_earnings`
+--
+
+CREATE TABLE `driver_earnings` (
+  `Earning_ID_Pk` int(11) NOT NULL,
+  `Ride_ID_Fk` int(11) DEFAULT NULL,
+  `Driver_ID_Fk` int(11) DEFAULT NULL,
+  `full_name` varchar(50) DEFAULT NULL,
+  `father_name` varchar(50) DEFAULT NULL,
+  `cnic` varchar(18) DEFAULT NULL,
+  `driver_code` varchar(10) DEFAULT NULL,
+  `Franchiser_ID_FK` int(11) DEFAULT NULL,
+  `User_ID_FK` int(11) DEFAULT NULL,
+  `Easypaisa` varchar(15) DEFAULT NULL,
+  `Easypaisa_Active` tinyint(1) DEFAULT NULL,
+  `JazzCash` varchar(15) DEFAULT NULL,
+  `JazzCash_Active` tinyint(1) DEFAULT NULL,
+  `dob` date DEFAULT NULL,
+  `phone` varchar(15) DEFAULT NULL,
+  `email` varchar(100) DEFAULT NULL,
+  `address` varchar(100) DEFAULT NULL,
+  `city` varchar(50) DEFAULT NULL,
+  `vehicle_color` varchar(15) DEFAULT NULL,
+  `vehicle_model` varchar(50) DEFAULT NULL,
+  `vehicle_number` varchar(10) DEFAULT NULL,
+  `join_date` date DEFAULT NULL,
+  `Rating` decimal(4,2) DEFAULT NULL,
+  `Total_Fare` decimal(8,2) DEFAULT NULL COMMENT 'Amount rider paid (from ride_history.Fare)',
+  `Organization_Fee` decimal(8,2) NOT NULL DEFAULT 0.00,
+  `Driver_Earning` decimal(8,2) DEFAULT NULL COMMENT 'Total_Fare - Organization_Fee',
+  `Payment_Method` enum('Cash','Card','Wallet','Easypaisa','JazzCash') DEFAULT 'Cash',
+  `status` varchar(15) DEFAULT NULL,
+  `Is_Online` tinyint(1) DEFAULT NULL,
+  `Is_Available` tinyint(1) DEFAULT NULL,
+  `driver_earnings_sum` decimal(10,2) DEFAULT NULL,
+  `completed_rides_count` int(11) DEFAULT NULL,
+  `Vehicle_Type` varchar(50) DEFAULT NULL,
+  `Earned_At` timestamp NOT NULL DEFAULT current_timestamp() COMMENT 'When ride was completed',
+  `CreatedAt` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `driver_payments`
+--
+
+CREATE TABLE `driver_payments` (
+  `id` int(11) NOT NULL,
+  `driver_id` int(11) NOT NULL,
+  `amount` decimal(10,2) NOT NULL,
+  `payment_type` enum('advance','settlement','bonus','penalty') DEFAULT 'settlement',
+  `payment_method` enum('cash','easypaisa','jazzcash','bank_transfer') NOT NULL,
+  `transaction_id` varchar(100) DEFAULT NULL,
+  `notes` text DEFAULT NULL,
+  `payment_date` timestamp NOT NULL DEFAULT current_timestamp(),
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `created_by` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `driver_wallet`
+--
+
+CREATE TABLE `driver_wallet` (
+  `id` int(11) NOT NULL,
+  `driver_id` int(11) NOT NULL,
+  `transaction_type` enum('credit','debit') NOT NULL,
+  `amount` decimal(10,2) NOT NULL,
+  `description` text DEFAULT NULL,
+  `reference_id` varchar(100) DEFAULT NULL,
+  `payment_method` enum('cash','easypaisa','jazzcash','bank_transfer','other') DEFAULT 'cash',
+  `status` enum('pending','completed','cancelled') DEFAULT 'completed',
+  `transaction_date` timestamp NOT NULL DEFAULT current_timestamp(),
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `created_by` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `franchiser`
+--
+
+CREATE TABLE `franchiser` (
+  `id` int(11) NOT NULL,
+  `company_name` varchar(250) DEFAULT NULL,
+  `legal_name` varchar(255) DEFAULT NULL,
+  `contact_person` varchar(50) DEFAULT NULL,
+  `registration_number` varchar(100) DEFAULT NULL,
+  `tax_id` varchar(100) DEFAULT NULL,
+  `email` varchar(250) DEFAULT NULL,
+  `phone` varchar(50) DEFAULT NULL,
+  `alternate_phone` varchar(50) DEFAULT NULL,
+  `website` varchar(255) DEFAULT NULL,
+  `address` varchar(255) DEFAULT NULL,
+  `address_line2` varchar(255) DEFAULT NULL,
+  `city` varchar(100) DEFAULT NULL,
+  `area` varchar(50) DEFAULT NULL,
+  `state` varchar(100) DEFAULT NULL,
+  `postal_code` varchar(20) DEFAULT NULL,
+  `country` varchar(100) DEFAULT 'USA',
+  `industry_type` varchar(100) DEFAULT NULL,
+  `business_description` text DEFAULT NULL,
+  `year_established` year(4) DEFAULT NULL,
+  `number_of_locations` int(11) DEFAULT 0,
+  `total_employees` int(11) DEFAULT 0,
+  `franchise_fee` decimal(15,2) DEFAULT 0.00,
+  `royalty_fee` decimal(5,2) DEFAULT NULL,
+  `marketing_fee` decimal(5,2) DEFAULT NULL,
+  `minimum_capital_required` decimal(15,2) DEFAULT NULL,
+  `contract_term_years` int(11) DEFAULT NULL,
+  `renewal_option_years` int(11) DEFAULT NULL,
+  `status` enum('active','inactive','pending','suspended') DEFAULT 'active',
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `notes` text DEFAULT NULL,
+  `profile_complete` tinyint(1) DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -116,6 +304,66 @@ CREATE TABLE `login_log` (
   `Description` text DEFAULT NULL,
   `IP_Address` varchar(20) DEFAULT NULL
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `notifications`
+--
+
+CREATE TABLE `notifications` (
+  `Notification_ID_Pk` int(11) NOT NULL,
+  `Template_ID` int(11) DEFAULT NULL,
+  `Target_Type` enum('all','role','specific') NOT NULL,
+  `Target_Role` enum('driver','rider') DEFAULT NULL,
+  `Target_User_Id` int(11) DEFAULT NULL,
+  `Title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `Message_Body` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `Data_Type` varchar(100) DEFAULT 'Go Ride - Pakistan',
+  `Status` enum('pending','processing','sent','failed','cancelled') DEFAULT 'pending',
+  `Priority` enum('high','normal','low') DEFAULT 'normal',
+  `Api_Response` text DEFAULT NULL,
+  `Retry_Count` int(11) DEFAULT 0,
+  `Max_Retries` int(11) DEFAULT 3,
+  `Scheduled_Time` datetime DEFAULT NULL,
+  `Created_By` int(11) DEFAULT NULL,
+  `Created_Date` datetime DEFAULT current_timestamp(),
+  `Processed_Date` datetime DEFAULT NULL,
+  `Sent_Date` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `notification_logs`
+--
+
+CREATE TABLE `notification_logs` (
+  `Log_ID_Pk` int(11) NOT NULL,
+  `Notification_ID` int(11) NOT NULL,
+  `Action` varchar(50) NOT NULL,
+  `Status` varchar(50) DEFAULT NULL,
+  `Message` text DEFAULT NULL,
+  `Created_Date` datetime DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `notification_templates`
+--
+
+CREATE TABLE `notification_templates` (
+  `Template_ID_Pk` int(11) NOT NULL,
+  `Template_Name` varchar(100) NOT NULL,
+  `Title` varchar(255) DEFAULT NULL,
+  `Message_Body` mediumtext NOT NULL,
+  `Data_Type` varchar(100) DEFAULT 'Go Ride - Pakistan',
+  `Icon` varchar(50) DEFAULT 'fa-bell',
+  `Created_By` int(11) DEFAULT NULL,
+  `Created_Date` datetime DEFAULT current_timestamp(),
+  `Is_Active` tinyint(1) DEFAULT 1
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -147,13 +395,14 @@ CREATE TABLE `privilages` (
   `User_Type` varchar(50) DEFAULT NULL,
   `Sno` int(11) DEFAULT NULL,
   `Fa_Fa_Icon` varchar(50) DEFAULT NULL,
-  `Menu_Group` varchar(50) DEFAULT NULL,
-  `Item` varchar(50) DEFAULT NULL,
-  `Target` varchar(50) DEFAULT NULL,
+  `Menu_Group` varchar(100) DEFAULT NULL,
+  `Item` varchar(100) DEFAULT NULL,
+  `Target` varchar(100) DEFAULT NULL,
   `Report_Name` varchar(100) DEFAULT NULL,
-  `Open_In_NewTab` tinyint(1) DEFAULT NULL,
-  `isHeading` tinyint(1) DEFAULT NULL,
-  `isRestricted` tinyint(1) DEFAULT NULL,
+  `Open_In_NewTab` tinyint(1) DEFAULT 0,
+  `isHeading` tinyint(1) DEFAULT 0,
+  `isRestricted` tinyint(1) DEFAULT 0,
+  `isHidenOption` tinyint(1) DEFAULT 0,
   `Form_Wise_Privilages` varchar(10) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
 
@@ -195,7 +444,8 @@ CREATE TABLE `ride_history` (
   `Organization_Fee` decimal(8,2) DEFAULT 0.00,
   `End_Time` timestamp NULL DEFAULT NULL,
   `CreatedAt` timestamp NOT NULL DEFAULT current_timestamp(),
-  `UpdatedAt` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+  `UpdatedAt` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `share_token` varchar(64) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -219,20 +469,27 @@ CREATE TABLE `ride_reviews` (
 -- --------------------------------------------------------
 
 --
--- Table structure for table `driver_earnings`
--- One row per completed ride: driver's earning = Total_Fare - Organization_Fee
+-- Table structure for table `support_tickets`
 --
-CREATE TABLE `driver_earnings` (
-  `Earning_ID_Pk` int(11) NOT NULL,
-  `Ride_ID_Fk` int(11) NOT NULL,
-  `Driver_ID_Fk` int(11) NOT NULL,
-  `Total_Fare` decimal(8,2) NOT NULL COMMENT 'Amount rider paid (from ride_history.Fare)',
-  `Organization_Fee` decimal(8,2) NOT NULL DEFAULT 0.00,
-  `Driver_Earning` decimal(8,2) NOT NULL COMMENT 'Total_Fare - Organization_Fee',
-  `Payment_Method` enum('Cash','Card','Wallet','Easypaisa','JazzCash') DEFAULT 'Cash',
-  `Vehicle_Type` varchar(50) DEFAULT NULL,
-  `Earned_At` timestamp NOT NULL DEFAULT current_timestamp() COMMENT 'When ride was completed',
-  `CreatedAt` timestamp NOT NULL DEFAULT current_timestamp()
+
+CREATE TABLE `support_tickets` (
+  `id` int(11) NOT NULL,
+  `ticket_number` varchar(20) NOT NULL,
+  `franchise_id` varchar(50) DEFAULT '0',
+  `user_id` int(11) NOT NULL,
+  `staff_user_id` int(11) DEFAULT NULL,
+  `full_name` varchar(100) DEFAULT NULL,
+  `mobile_number` varchar(20) NOT NULL,
+  `cnic_number` varchar(30) DEFAULT NULL,
+  `service_type` enum('Rider Support','Driver Support','Food Delivery','Courier Service','Grocery Delivery') NOT NULL,
+  `priority` enum('Low','Medium','High','Urgent','Emergency') DEFAULT 'Medium',
+  `issue_description` text DEFAULT NULL,
+  `status` enum('Open','In Progress','Resolved','Closed') DEFAULT 'Open',
+  `created_by` int(11) DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `closed_at` timestamp NULL DEFAULT NULL,
+  `closed_by` int(11) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -288,11 +545,18 @@ CREATE TABLE `users` (
   `User_Name` varchar(50) DEFAULT NULL,
   `Email` varchar(100) DEFAULT NULL,
   `Role` varchar(25) DEFAULT NULL,
+  `Franchiser_ID_FK` int(11) DEFAULT 0,
+  `Language` enum('English','Urdu') NOT NULL DEFAULT 'English',
   `New_Order_Tone` varchar(25) DEFAULT NULL,
   `Create_Date` timestamp NULL DEFAULT current_timestamp(),
   `Password` varchar(100) DEFAULT NULL,
   `Device_Auth_Required` tinyint(1) DEFAULT NULL,
   `Mobile` varchar(50) DEFAULT NULL,
+  `AccountDeleted` tinyint(1) DEFAULT 0,
+  `restored_at` datetime DEFAULT NULL,
+  `restored_by` int(11) DEFAULT NULL,
+  `AccountDeletionDate` datetime DEFAULT NULL,
+  `AccountDeletionReason` varchar(50) DEFAULT NULL,
   `Authorized_Email` varchar(100) DEFAULT NULL,
   `Authorized_User_Type` varchar(25) DEFAULT NULL,
   `Authorized_Companies` varchar(50) DEFAULT NULL,
@@ -319,7 +583,9 @@ CREATE TABLE `users` (
   `Device_Verification_Code` varchar(10) DEFAULT NULL,
   `Staff_ID_Fk` int(11) DEFAULT NULL,
   `Parent_ID_FK` int(11) DEFAULT NULL,
-  `Coordinates` varchar(50) DEFAULT NULL
+  `Coordinates` varchar(50) DEFAULT NULL,
+  `fcm_token` varchar(512) DEFAULT NULL COMMENT 'Firebase Cloud Messaging token for push notifications',
+  `fcm_token_updated_at` timestamp NULL DEFAULT NULL ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
 
 -- --------------------------------------------------------
@@ -361,10 +627,10 @@ CREATE TABLE `vehicle_fare_rate` (
   `Maximum_Distance` decimal(6,2) DEFAULT 50.00 COMMENT 'Maximum allowed distance in km',
   `Currency` varchar(10) DEFAULT 'PKR',
   `Is_Active` tinyint(1) DEFAULT 1,
-  `rides_limit` int(11) NOT NULL DEFAULT 0 COMMENT 'Rides limit threshold (e.g. max rides per period)',
-  `rides_over_limit_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Count of rides over the limit',
   `CreatedAt` timestamp NOT NULL DEFAULT current_timestamp(),
-  `UpdatedAt` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+  `UpdatedAt` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `rides_limit` int(11) NOT NULL DEFAULT 0 COMMENT 'Rides limit threshold (e.g. max rides per period)',
+  `rides_over_limit_count` int(11) NOT NULL DEFAULT 0 COMMENT 'Count of rides over the limit'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -431,10 +697,39 @@ CREATE TABLE `voucher_transactions` (
 --
 
 --
+-- Indexes for table `appeal_restore`
+--
+ALTER TABLE `appeal_restore`
+  ADD PRIMARY KEY (`restore_id`),
+  ADD KEY `idx_email` (`email`),
+  ADD KEY `idx_status` (`restore_status`);
+
+--
+-- Indexes for table `area`
+--
+ALTER TABLE `area`
+  ADD PRIMARY KEY (`ID_PK`),
+  ADD KEY `Area_City` (`Area_Name`,`City_Name`),
+  ADD KEY `Area` (`Area_Name`) USING BTREE;
+
+--
+-- Indexes for table `city`
+--
+ALTER TABLE `city`
+  ADD PRIMARY KEY (`ID_PK`),
+  ADD KEY `City` (`City_Name`);
+
+--
 -- Indexes for table `company`
 --
 ALTER TABLE `company`
   ADD PRIMARY KEY (`Company_ID_Pk`);
+
+--
+-- Indexes for table `contact_us_info`
+--
+ALTER TABLE `contact_us_info`
+  ADD PRIMARY KEY (`id`);
 
 --
 -- Indexes for table `drivers`
@@ -448,10 +743,71 @@ ALTER TABLE `drivers`
   ADD KEY `idx_created_at` (`created_at`);
 
 --
+-- Indexes for table `driver_earnings`
+--
+ALTER TABLE `driver_earnings`
+  ADD PRIMARY KEY (`Earning_ID_Pk`),
+  ADD UNIQUE KEY `unique_ride_earning` (`Ride_ID_Fk`),
+  ADD KEY `idx_driver_earnings_driver` (`Driver_ID_Fk`),
+  ADD KEY `idx_driver_earnings_earned_at` (`Earned_At`);
+
+--
+-- Indexes for table `driver_payments`
+--
+ALTER TABLE `driver_payments`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_driver_payment` (`driver_id`);
+
+--
+-- Indexes for table `driver_wallet`
+--
+ALTER TABLE `driver_wallet`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_driver_id` (`driver_id`),
+  ADD KEY `idx_transaction_date` (`transaction_date`);
+
+--
+-- Indexes for table `franchiser`
+--
+ALTER TABLE `franchiser`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_company_name` (`company_name`),
+  ADD KEY `idx_email` (`email`),
+  ADD KEY `idx_status` (`status`),
+  ADD KEY `idx_industry` (`industry_type`),
+  ADD KEY `idx_country` (`country`);
+
+--
 -- Indexes for table `login_log`
 --
 ALTER TABLE `login_log`
   ADD PRIMARY KEY (`ID_PK`);
+
+--
+-- Indexes for table `notifications`
+--
+ALTER TABLE `notifications`
+  ADD PRIMARY KEY (`Notification_ID_Pk`),
+  ADD KEY `Template_ID` (`Template_ID`),
+  ADD KEY `Target_User_Id` (`Target_User_Id`),
+  ADD KEY `Created_By` (`Created_By`),
+  ADD KEY `idx_notification_status` (`Status`),
+  ADD KEY `idx_notification_created` (`Created_Date`),
+  ADD KEY `idx_notification_scheduled` (`Scheduled_Time`);
+
+--
+-- Indexes for table `notification_logs`
+--
+ALTER TABLE `notification_logs`
+  ADD PRIMARY KEY (`Log_ID_Pk`),
+  ADD KEY `Notification_ID` (`Notification_ID`);
+
+--
+-- Indexes for table `notification_templates`
+--
+ALTER TABLE `notification_templates`
+  ADD PRIMARY KEY (`Template_ID_Pk`),
+  ADD KEY `Created_By` (`Created_By`);
 
 --
 -- Indexes for table `otp_verifications`
@@ -481,7 +837,8 @@ ALTER TABLE `ride_history`
   ADD KEY `idx_driver_id` (`Driver_ID_Fk`),
   ADD KEY `idx_ride_status` (`Ride_Status`),
   ADD KEY `idx_ride_date` (`Ride_Date`),
-  ADD KEY `idx_user_ride_date` (`User_ID_Fk`,`Ride_Date`);
+  ADD KEY `idx_user_ride_date` (`User_ID_Fk`,`Ride_Date`),
+  ADD UNIQUE KEY `idx_share_token` (`share_token`);
 
 --
 -- Indexes for table `ride_reviews`
@@ -491,13 +848,15 @@ ALTER TABLE `ride_reviews`
   ADD UNIQUE KEY `unique_review` (`Ride_ID_Fk`,`Reviewer_ID_Fk`);
 
 --
--- Indexes for table `driver_earnings`
+-- Indexes for table `support_tickets`
 --
-ALTER TABLE `driver_earnings`
-  ADD PRIMARY KEY (`Earning_ID_Pk`),
-  ADD UNIQUE KEY `unique_ride_earning` (`Ride_ID_Fk`),
-  ADD KEY `idx_driver_earnings_driver` (`Driver_ID_Fk`),
-  ADD KEY `idx_driver_earnings_earned_at` (`Earned_At`);
+ALTER TABLE `support_tickets`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `ticket_number` (`ticket_number`),
+  ADD KEY `idx_mobile` (`mobile_number`),
+  ADD KEY `idx_cnic` (`cnic_number`),
+  ADD KEY `idx_status` (`status`),
+  ADD KEY `idx_franchise` (`franchise_id`);
 
 --
 -- Indexes for table `sysconfigsetup`
@@ -557,10 +916,34 @@ ALTER TABLE `voucher_transactions`
 --
 
 --
+-- AUTO_INCREMENT for table `appeal_restore`
+--
+ALTER TABLE `appeal_restore`
+  MODIFY `restore_id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `area`
+--
+ALTER TABLE `area`
+  MODIFY `ID_PK` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `city`
+--
+ALTER TABLE `city`
+  MODIFY `ID_PK` int(11) NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `company`
 --
 ALTER TABLE `company`
   MODIFY `Company_ID_Pk` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `contact_us_info`
+--
+ALTER TABLE `contact_us_info`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `drivers`
@@ -569,10 +952,52 @@ ALTER TABLE `drivers`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `driver_earnings`
+--
+ALTER TABLE `driver_earnings`
+  MODIFY `Earning_ID_Pk` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `driver_payments`
+--
+ALTER TABLE `driver_payments`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `driver_wallet`
+--
+ALTER TABLE `driver_wallet`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `franchiser`
+--
+ALTER TABLE `franchiser`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `login_log`
 --
 ALTER TABLE `login_log`
   MODIFY `ID_PK` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `notifications`
+--
+ALTER TABLE `notifications`
+  MODIFY `Notification_ID_Pk` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `notification_logs`
+--
+ALTER TABLE `notification_logs`
+  MODIFY `Log_ID_Pk` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `notification_templates`
+--
+ALTER TABLE `notification_templates`
+  MODIFY `Template_ID_Pk` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `otp_verifications`
@@ -599,10 +1024,10 @@ ALTER TABLE `ride_reviews`
   MODIFY `Review_ID_Pk` int(11) NOT NULL AUTO_INCREMENT;
 
 --
--- AUTO_INCREMENT for table `driver_earnings`
+-- AUTO_INCREMENT for table `support_tickets`
 --
-ALTER TABLE `driver_earnings`
-  MODIFY `Earning_ID_Pk` int(11) NOT NULL AUTO_INCREMENT;
+ALTER TABLE `support_tickets`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `sysconfigsetup`
@@ -647,14 +1072,26 @@ ALTER TABLE `voucher_transactions`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
--- FCM token columns for push notifications (rider = users, driver = drivers)
+-- Constraints for dumped tables
 --
-ALTER TABLE `users`
-  ADD COLUMN `fcm_token` VARCHAR(512) DEFAULT NULL COMMENT 'Firebase Cloud Messaging token for push notifications',
-  ADD COLUMN `fcm_token_updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE current_timestamp();
 
-ALTER TABLE `drivers`
-  ADD COLUMN `fcm_token` VARCHAR(512) DEFAULT NULL COMMENT 'Firebase Cloud Messaging token for push notifications',
-  ADD COLUMN `fcm_token_updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE current_timestamp();
+--
+-- Constraints for table `notifications`
+--
+ALTER TABLE `notifications`
+  ADD CONSTRAINT `notifications_ibfk_1` FOREIGN KEY (`Template_ID`) REFERENCES `notification_templates` (`Template_ID_Pk`) ON DELETE SET NULL,
+  ADD CONSTRAINT `notifications_ibfk_2` FOREIGN KEY (`Target_User_Id`) REFERENCES `users` (`User_ID_Pk`) ON DELETE SET NULL,
+  ADD CONSTRAINT `notifications_ibfk_3` FOREIGN KEY (`Created_By`) REFERENCES `users` (`User_ID_Pk`) ON DELETE SET NULL;
 
+--
+-- Constraints for table `notification_logs`
+--
+ALTER TABLE `notification_logs`
+  ADD CONSTRAINT `notification_logs_ibfk_1` FOREIGN KEY (`Notification_ID`) REFERENCES `notifications` (`Notification_ID_Pk`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `notification_templates`
+--
+ALTER TABLE `notification_templates`
+  ADD CONSTRAINT `notification_templates_ibfk_1` FOREIGN KEY (`Created_By`) REFERENCES `users` (`User_ID_Pk`) ON DELETE SET NULL;
 COMMIT;

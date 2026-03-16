@@ -18,19 +18,43 @@ function initSocket(server) {
         connectTimeout: 45000,
     });
 
-    // ── JWT Authentication Middleware ──
-    io.use((socket, next) => {
+    // ── Authentication Middleware (JWT or share_token for viewers) ──
+    io.use(async (socket, next) => {
         const token = socket.handshake.auth?.token;
-        if (!token) {
-            return next(new Error("Authentication error: No token provided"));
+        const shareToken = socket.handshake.auth?.share_token;
+
+        // Path 1: Normal JWT auth for riders/drivers
+        if (token) {
+            try {
+                const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_fallback_secret');
+                socket.user = decoded; // { userId, role, phone }
+                return next();
+            } catch (err) {
+                return next(new Error("Authentication error: Invalid token"));
+            }
         }
-        try {
-            const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_fallback_secret');
-            socket.user = decoded; // { userId, role, phone }
-            next();
-        } catch (err) {
-            return next(new Error("Authentication error: Invalid token"));
+
+        // Path 2: Share token for ride viewers (read-only)
+        if (shareToken) {
+            try {
+                const conn = await pool.getConnection();
+                const [rows] = await conn.query(
+                    "SELECT Ride_ID_Pk FROM ride_history WHERE share_token = ? AND Ride_Status IN ('Accepted','Arrived','Started') LIMIT 1",
+                    [shareToken]
+                );
+                conn.release();
+                if (rows.length > 0) {
+                    socket.user = { userId: `viewer_${shareToken.substring(0, 8)}`, role: 'viewer', phone: null };
+                    socket.viewerRideId = rows[0].Ride_ID_Pk;
+                    return next();
+                }
+                return next(new Error("Authentication error: Invalid or expired share token"));
+            } catch (err) {
+                return next(new Error("Authentication error: " + err.message));
+            }
         }
+
+        return next(new Error("Authentication error: No token provided"));
     });
 
     // ── Connection Handler ──
@@ -41,6 +65,19 @@ function initSocket(server) {
         // Every user joins their personal room for targeted notifications
         socket.join(`user:${userId}`);
         console.log(`👤 User joined room: user:${userId}`);
+
+        // ── Viewer auto-join: read-only ride room via share token ──
+        if (socket.viewerRideId) {
+            const viewerRideId = socket.viewerRideId;
+            socket.join(`ride:${viewerRideId}`);
+            socket.activeRideId = viewerRideId;
+            console.log(`👁️ Viewer joined ride:${viewerRideId}`);
+            // Viewers are read-only — skip the rest of event handlers
+            socket.on("disconnect", (reason) => {
+                console.log(`❌ Viewer disconnected (reason: ${reason})`);
+            });
+            return;
+        }
 
         // ── Auto-rejoin active ride room on reconnect ──
         try {
