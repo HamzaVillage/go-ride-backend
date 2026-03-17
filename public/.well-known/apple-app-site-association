@@ -1,0 +1,11 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "CP83SHV6T7.com.GoRidePakistan",
+        "paths": ["/api/ride/track/*"]
+      }
+    ]
+  }
+}

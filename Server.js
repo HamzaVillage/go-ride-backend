@@ -27,6 +27,22 @@ app.get("/", (req, res) => {
     res.send("Welcome to the GoRide API!");
 });
 
+// Apple App Site Association for iOS Universal Links
+app.get("/.well-known/apple-app-site-association", (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.json({
+        applinks: {
+            apps: [],
+            details: [
+                {
+                    appID: "CP83SHV6T7.com.GoRidePakistan",
+                    paths: ["/api/ride/track/*"]
+                }
+            ]
+        }
+    });
+});
+
 app.use("/auth", authRoutes);
 app.use("/user", userRoutes);
 app.use("/fare", fareRoutes);
