@@ -41,6 +41,69 @@ const userController = {
         }
     },
 
+    getDriverAccount: async (req, res) => {
+        const user = req.user;
+        let conn;
+        try {
+            conn = await pool.getConnection();
+            const [rows] = await conn.query(
+                `SELECT id, full_name, father_name, cnic, phone, email, address, city, dob,
+                        vehicle_type, vehicle_model, vehicle_number, vehicle_color,
+                        photo_path, Rating, join_date, completed_rides_count,
+                        Easypaisa, Easypaisa_Active, JazzCash, JazzCash_Active
+                 FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')`,
+                [user.phone]
+            );
+            if (rows.length === 0) return res.status(404).json({ success: false, message: "Driver profile not found" });
+            res.json({ success: true, data: rows[0] });
+        } catch (err) {
+            console.error("Get Driver Account Error:", err);
+            res.status(500).json({ success: false, message: "Error fetching driver account", error: err.message });
+        } finally {
+            if (conn) conn.release();
+        }
+    },
+
+    updateDriverAccount: async (req, res) => {
+        const user = req.user;
+        const { full_name, email, address, city, easypaisa, jazzcash } = req.body;
+        let conn;
+        try {
+            conn = await pool.getConnection();
+            const [driverRows] = await conn.query(
+                "SELECT id FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                [user.phone]
+            );
+            if (driverRows.length === 0) {
+                return res.status(404).json({ success: false, message: "Driver profile not found" });
+            }
+
+            const fields = [];
+            const values = [];
+
+            if (full_name !== undefined)  { fields.push('full_name = ?'); values.push(full_name); }
+            if (email !== undefined)      { fields.push('email = ?'); values.push(email); }
+            if (address !== undefined)    { fields.push('address = ?'); values.push(address); }
+            if (city !== undefined)       { fields.push('city = ?'); values.push(city); }
+            if (easypaisa !== undefined)  { fields.push('Easypaisa = ?'); values.push(easypaisa); }
+            if (jazzcash !== undefined)   { fields.push('JazzCash = ?'); values.push(jazzcash); }
+
+            if (fields.length === 0) {
+                return res.status(400).json({ success: false, message: "No fields to update" });
+            }
+
+            values.push(driverRows[0].id);
+            await conn.query(`UPDATE drivers SET ${fields.join(', ')} WHERE id = ?`, values);
+
+            res.json({ success: true, message: "Driver profile updated successfully" });
+        } catch (err) {
+            console.error("Update Driver Account Error:", err);
+            res.status(500).json({ success: false, message: "Error updating driver account", error: err.message });
+        } finally {
+            if (conn) conn.release();
+        }
+    },
+
     updateFcmToken: async (req, res) => {
         const userId = req.user.userId;
         const role = req.user.role;
