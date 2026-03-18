@@ -73,6 +73,51 @@ const supportController = {
         } finally {
             if (conn) conn.release();
         }
+    },
+
+    submitComplaint: async (req, res) => {
+        const userId = req.user?.userId || req.user?.id;
+        const { service_type = 'Rider Support', priority = 'Medium', issue_description, category } = req.body;
+
+        if (!userId) {
+            return res.status(401).json({ success: false, message: 'Unauthorized. Please login again.' });
+        }
+
+        if (!issue_description) {
+            return res.status(400).json({ success: false, message: 'Issue description is required' });
+        }
+
+        let conn;
+        try {
+            conn = await pool.getConnection();
+
+            // Fetch user details
+            const [users] = await conn.query('SELECT User_Name, Mobile, Cnic FROM users WHERE User_ID_Pk = ?', [userId]);
+            if (users.length === 0) {
+                return res.status(404).json({ success: false, message: 'User not found' });
+            }
+
+            const user = users[0];
+            const fullName = user.User_Name || 'Unknown';
+            const mobileNumber = user.Mobile || '';
+            const cnicNumber = user.Cnic || null; // Cnic can be null
+            const finalDescription = issue_description;
+            const finalCategory = category || 'Other issue';
+
+            const [result] = await conn.query(
+                `INSERT INTO complaints 
+                (user_id, full_name, mobile_number, category, issue_description)
+                VALUES (?, ?, ?, ?, ?)`,
+                [userId, fullName, mobileNumber, finalCategory, finalDescription]
+            );
+
+            res.json({ success: true, message: 'Complaint submitted successfully', complaint_id: result.insertId });
+        } catch (err) {
+            console.error('Submit Complaint Error:', err);
+            res.status(500).json({ success: false, message: 'Failed to submit complaint', error: err.message });
+        } finally {
+            if (conn) conn.release();
+        }
     }
 };
 
