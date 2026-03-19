@@ -142,7 +142,8 @@ const authController = {
                     name: user.User_Name,
                     email: user.Email,
                     role: user.Role,
-                    phone: user.Mobile
+                    phone: user.Mobile,
+                    photo: user.User_Pic
                 }
             };
 

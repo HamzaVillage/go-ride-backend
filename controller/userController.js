@@ -7,7 +7,7 @@ const userController = {
         let conn;
         try {
             conn = await pool.getConnection();
-            const [rows] = await conn.query("SELECT User_ID_Pk, User_Name, Email, Mobile, Role, Cnic, Address, City FROM users WHERE User_ID_Pk = ?", [userId]);
+            const [rows] = await conn.query("SELECT User_ID_Pk, User_Name, Email, Mobile, Role, Cnic, Address, City, User_Pic FROM users WHERE User_ID_Pk = ?", [userId]);
 
             if (rows.length === 0) return res.status(404).json({ success: false, message: "User not found" });
 
@@ -143,6 +143,48 @@ const userController = {
         } catch (err) {
             console.error("Update FCM Token Error:", err);
             res.status(500).json({ success: false, message: "Error updating FCM token", error: err.message });
+        } finally {
+            if (conn) conn.release();
+        }
+    },
+
+    updateProfilePicture: async (req, res) => {
+        const userId = req.user.userId;
+        const role = req.user.role;
+        const phone = req.user.phone;
+
+        if (!req.file) {
+            return res.status(400).json({ success: false, message: "No file uploaded" });
+        }
+
+        const fileName = req.file.filename;
+        let conn;
+        try {
+            conn = await pool.getConnection();
+            
+            // Update users table (common for both roles as secondary record)
+            await conn.query(
+                "UPDATE users SET User_Pic = ? WHERE User_ID_Pk = ?",
+                [fileName, userId]
+            );
+
+            // If driver, also update drivers table
+            if (role === 'driver' && phone) {
+                const normalizedPhone = String(phone).replace(/-/g, '');
+                await conn.query(
+                    "UPDATE drivers SET photo_path = ? WHERE REPLACE(phone, '-', '') = ?",
+                    [fileName, normalizedPhone]
+                );
+            }
+
+            res.json({ 
+                success: true, 
+                message: "Profile picture updated successfully",
+                fileName: fileName
+            });
+        } catch (err) {
+            console.error("Update Profile Picture Error:", err);
+            res.status(500).json({ success: false, message: "Error updating profile picture", error: err.message });
         } finally {
             if (conn) conn.release();
         }
