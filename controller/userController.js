@@ -262,11 +262,24 @@ const userController = {
             // Match to existing user if phone exists
             let userIdFK = null;
             const [matchingUser] = await conn.query(
-                "SELECT User_ID_Pk FROM users WHERE REPLACE(Mobile, '-', '') = ? AND (Role IS NULL OR Role != 'driver') LIMIT 1",
+                "SELECT User_ID_Pk FROM users WHERE REPLACE(Mobile, '-', '') = ? LIMIT 1",
                 [normalizedPhone]
             );
             if (matchingUser.length > 0) {
                 userIdFK = matchingUser[0].User_ID_Pk;
+            } else {
+                // Create user record in users table if it does not exist
+                const crypto = require('crypto');
+                const bcrypt = require('bcryptjs');
+                const uniqueId = crypto.randomBytes(16).toString('hex');
+                const hashedPassword = await bcrypt.hash(Password || '12345', 10);
+                
+                const [newUserResult] = await conn.query(
+                    `INSERT INTO users (User_Name, Email, Password, Mobile, Role, Unique_ID) 
+                     VALUES (?, ?, ?, ?, ?, ?)`,
+                    [Name, Email || null, hashedPassword, normalizedPhone, 'driver', uniqueId]
+                );
+                userIdFK = newUserResult.insertId;
             }
 
             // Format CNIC to fit varchar(15) db column
