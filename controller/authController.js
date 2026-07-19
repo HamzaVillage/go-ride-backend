@@ -299,11 +299,29 @@ const authController = {
             // Normalize input phone by removing any dashes
             const normalizedPhone = phone.replace(/-/g, '');
 
-            // Check if driver exists in drivers table (comparison ignoring dashes in DB)
-            const [driverRows] = await conn.query(
-                "SELECT * FROM drivers WHERE REPLACE(phone, '-', '') = ?",
+            // Resolve driver using phone in users table OR phone in drivers table
+            const [userRowsForPhone] = await conn.query(
+                "SELECT User_ID_Pk FROM users WHERE REPLACE(Mobile, '-', '') = ?",
                 [normalizedPhone]
             );
+
+            let driverRows = [];
+            if (userRowsForPhone.length > 0) {
+                const [rowsByUserId] = await conn.query(
+                    "SELECT * FROM drivers WHERE User_ID_FK = ?",
+                    [userRowsForPhone[0].User_ID_Pk]
+                );
+                driverRows = rowsByUserId;
+            }
+
+            if (driverRows.length === 0) {
+                const [rowsByPhone] = await conn.query(
+                    "SELECT * FROM drivers WHERE REPLACE(phone, '-', '') = ?",
+                    [normalizedPhone]
+                );
+                driverRows = rowsByPhone;
+            }
+
             if (driverRows.length === 0) {
                 return res.status(404).json({ success: false, message: "Driver not registered. Please contact your franchise." });
             }
@@ -389,19 +407,37 @@ const authController = {
                 return res.status(400).json({ success: false, message: "Invalid OTP" });
             }
 
-            // Get driver details (normalized comparison)
-            const [driverRows] = await conn.query(
-                "SELECT * FROM drivers WHERE REPLACE(phone, '-', '') = ?",
+            // Resolve driver using phone in users table OR phone in drivers table
+            const [userRowsForPhone] = await conn.query(
+                "SELECT User_ID_Pk FROM users WHERE REPLACE(Mobile, '-', '') = ?",
                 [normalizedPhone]
             );
+
+            let driverRows = [];
+            if (userRowsForPhone.length > 0) {
+                const [rowsByUserId] = await conn.query(
+                    "SELECT * FROM drivers WHERE User_ID_FK = ?",
+                    [userRowsForPhone[0].User_ID_Pk]
+                );
+                driverRows = rowsByUserId;
+            }
+
+            if (driverRows.length === 0) {
+                const [rowsByPhone] = await conn.query(
+                    "SELECT * FROM drivers WHERE REPLACE(phone, '-', '') = ?",
+                    [normalizedPhone]
+                );
+                driverRows = rowsByPhone;
+            }
+
             if (driverRows.length === 0) return res.status(404).json({ success: false, message: "Driver details not found" });
 
             const driver = driverRows[0];
 
             // Optional: Ensure user exists in users table for consistent JWT/Auth
             const [userRows] = await conn.query(
-                "SELECT * FROM users WHERE REPLACE(Mobile, '-', '') = ? AND Role = 'driver'",
-                [normalizedPhone]
+                "SELECT * FROM users WHERE User_ID_Pk = ? OR (REPLACE(Mobile, '-', '') = ? AND Role = 'driver')",
+                [driver.User_ID_FK || 0, normalizedPhone]
             );
             let userId;
             if (userRows.length === 0) {

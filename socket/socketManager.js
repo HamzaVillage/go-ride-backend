@@ -88,8 +88,8 @@ function initSocket(server) {
 
                 if (isDriver) {
                     const [driverRows] = await conn.query(
-                        "SELECT id FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
-                        [phone]
+                        "SELECT id FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                        [userId || 0, phone]
                     );
                     if (driverRows.length > 0) {
                         const [rides] = await conn.query(
@@ -125,8 +125,8 @@ function initSocket(server) {
                 const conn = await pool.getConnection();
                 try {
                     const [rows] = await conn.query(
-                        "SELECT id, vehicle_type, overdue_since, completed_rides_count FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
-                        [phone]
+                        "SELECT id, vehicle_type, overdue_since, completed_rides_count FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                        [userId || 0, phone]
                     );
                     if (rows.length === 0) {
                         socket.emit("driver:online:ack", { success: false, message: "Driver profile not found" });

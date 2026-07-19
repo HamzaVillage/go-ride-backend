@@ -108,8 +108,8 @@ const rideController = {
 
             // Derive driver info from JWT for security
             const [driverRows] = await conn.query(
-                "SELECT id, vehicle_type, overdue_since, completed_rides_count FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
-                [user.phone]
+                "SELECT id, vehicle_type, overdue_since, completed_rides_count FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                [user.userId || 0, user.phone]
             );
             if (driverRows.length === 0) {
                 return res.status(404).json({ success: false, message: "Driver profile not found" });
@@ -197,8 +197,8 @@ const rideController = {
 
             // Derive driver_id from JWT phone → drivers table (never trust client)
             const [driverRows] = await conn.query(
-                "SELECT id, full_name, vehicle_type FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
-                [user.phone]
+                "SELECT id, full_name, vehicle_type FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                [user.userId || 0, user.phone]
             );
             if (driverRows.length === 0) {
                 return res.status(404).json({ success: false, message: "Driver profile not found. Please contact support." });
@@ -498,7 +498,7 @@ const rideController = {
                 return res.status(400).json({ success: false, message: `Ride must be 'Arrived' to start (Current: ${ride.Ride_Status})` });
             }
 
-            const [driverRows] = await conn.query("SELECT id FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')", [user.phone]);
+            const [driverRows] = await conn.query("SELECT id FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')", [user.userId || 0, user.phone]);
             if (driverRows.length === 0 || driverRows[0].id !== ride.Driver_ID_Fk) {
                 return res.status(403).json({ success: false, message: "Only the assigned driver can start this ride" });
             }
@@ -553,7 +553,7 @@ const rideController = {
                 return res.status(403).json({ success: false, message: "No driver assigned to this ride" });
             }
 
-            const [driverRows] = await conn.query("SELECT id FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')", [user.phone]);
+            const [driverRows] = await conn.query("SELECT id FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')", [user.userId || 0, user.phone]);
             if (driverRows.length === 0 || driverRows[0].id !== ride.Driver_ID_Fk) {
                 return res.status(403).json({ success: false, message: "Only the assigned driver can mark arrival" });
             }
@@ -708,8 +708,8 @@ const rideController = {
 
             if (isDriver) {
                 const [driverRows] = await conn.query(
-                    "SELECT id FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
-                    [user.phone]
+                    "SELECT id FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                    [user.userId || 0, user.phone]
                 );
                 if (driverRows.length === 0) {
                     return res.status(404).json({ success: false, message: "Driver profile not found" });
@@ -866,8 +866,8 @@ const rideController = {
             conn = await pool.getConnection();
 
             const [driverRows] = await conn.query(
-                "SELECT * FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
-                [user.phone]
+                "SELECT * FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                [user.userId || 0, user.phone]
             );
 
             if (driverRows.length === 0) {
@@ -974,8 +974,8 @@ const rideController = {
             conn = await pool.getConnection();
 
             const [driverRows] = await conn.query(
-                "SELECT id FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
-                [user.phone]
+                "SELECT id FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                [user.userId || 0, user.phone]
             );
             if (driverRows.length === 0) {
                 return res.status(404).json({ success: false, message: "Driver profile not found" });
@@ -1008,8 +1008,8 @@ const rideController = {
             conn = await pool.getConnection();
 
             const [driverRows] = await conn.query(
-                "SELECT id FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
-                [user.phone]
+                "SELECT id FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                [user.userId || 0, user.phone]
             );
             if (driverRows.length === 0) {
                 return res.status(404).json({ success: false, message: "Driver profile not found" });
@@ -1133,8 +1133,8 @@ const rideController = {
                 if (isDriver) {
                     // Find the driver's id from phone
                     const [driverRows] = await conn.query(
-                        "SELECT id FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
-                        [user.phone]
+                        "SELECT id FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                        [user.userId || 0, user.phone]
                     );
                     if (driverRows.length === 0) {
                         conn.release();
