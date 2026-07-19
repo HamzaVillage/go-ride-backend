@@ -5,5 +5,6 @@ const farecalculationController = require('../controller/farecalculationControll
 // Calculate fare endpoint (Supports GET and POST)
 router.get('/calculate', farecalculationController.calculateFare);
 router.post('/calculate', farecalculationController.calculateFare);
+router.get('/vehicles', farecalculationController.getVehicleTypes);
 
 module.exports = router;

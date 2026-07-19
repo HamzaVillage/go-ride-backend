@@ -254,6 +254,21 @@ const farecalculationController = {
         } finally {
             if (conn) conn.release();
         }
+    },
+
+    getVehicleTypes: async (req, res) => {
+        let conn;
+        try {
+            conn = await pool.getConnection();
+            const [rows] = await conn.query("SELECT Vehicle_Type FROM vehicle_fare_rate WHERE Is_Active = 1 ORDER BY Rate_ID_Pk ASC");
+            const vehicles = rows.map(r => r.Vehicle_Type);
+            res.json({ success: true, vehicles });
+        } catch (err) {
+            console.error("Get Vehicle Types Error:", err);
+            res.status(500).json({ success: false, message: "Error fetching vehicle types", error: err.message });
+        } finally {
+            if (conn) conn.release();
+        }
     }
 };
 
