@@ -158,6 +158,7 @@ const rideController = {
                 WHERE r.Driver_ID_Fk IS NULL 
                 AND r.Ride_Status = 'Requested'
                 AND r.Vehicle_Type = ?
+                AND r.CreatedAt >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
                 HAVING distance_km < 50
                 ORDER BY distance_km ASC
             `;

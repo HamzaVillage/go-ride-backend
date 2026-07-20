@@ -51,8 +51,8 @@ const userController = {
                         vehicle_type, vehicle_model, vehicle_number, vehicle_color,
                         photo_path, Rating, join_date, completed_rides_count,
                         Easypaisa, Easypaisa_Active, JazzCash, JazzCash_Active
-                 FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')`,
-                [user.phone]
+                 FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')`,
+                [user.userId || 0, user.phone]
             );
             if (rows.length === 0) return res.status(404).json({ success: false, message: "Driver profile not found" });
             res.json({ success: true, data: rows[0] });
@@ -71,8 +71,8 @@ const userController = {
         try {
             conn = await pool.getConnection();
             const [driverRows] = await conn.query(
-                "SELECT id FROM drivers WHERE REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
-                [user.phone]
+                "SELECT id FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                [user.userId || 0, user.phone]
             );
             if (driverRows.length === 0) {
                 return res.status(404).json({ success: false, message: "Driver profile not found" });
@@ -126,8 +126,8 @@ const userController = {
             if (role === 'driver' && phone) {
                 const normalizedPhone = String(phone).replace(/-/g, '');
                 const [driverRows] = await conn.query(
-                    "SELECT id FROM drivers WHERE REPLACE(phone, '-', '') = ?",
-                    [normalizedPhone]
+                    "SELECT id FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                    [userId, phone]
                 );
                 if (driverRows.length > 0) {
                     await conn.query(
@@ -172,8 +172,8 @@ const userController = {
             if (role === 'driver' && phone) {
                 const normalizedPhone = String(phone).replace(/-/g, '');
                 await conn.query(
-                    "UPDATE drivers SET photo_path = ? WHERE REPLACE(phone, '-', '') = ?",
-                    [fileName, normalizedPhone]
+                    "UPDATE drivers SET photo_path = ? WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                    [fileName, userId, phone]
                 );
             }
 
@@ -197,8 +197,8 @@ const userController = {
             conn = await pool.getConnection();
             const normalizedPhone = String(user.phone).replace(/-/g, '');
             const [rows] = await conn.query(
-                "SELECT status FROM drivers WHERE REPLACE(phone, '-', '') = ?",
-                [normalizedPhone]
+                "SELECT status FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                [user.userId || 0, user.phone]
             );
             if (rows.length === 0) {
                 return res.json({ success: true, exists: false });
