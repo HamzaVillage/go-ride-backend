@@ -273,7 +273,7 @@ const userController = {
                 const bcrypt = require('bcryptjs');
                 const uniqueId = crypto.randomBytes(16).toString('hex');
                 const hashedPassword = await bcrypt.hash(Password || '12345', 10);
-                
+
                 const [newUserResult] = await conn.query(
                     `INSERT INTO users (User_Name, Email, Password, Mobile, Role, Unique_ID) 
                      VALUES (?, ?, ?, ?, ?, ?)`,
