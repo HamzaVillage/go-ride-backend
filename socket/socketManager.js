@@ -83,22 +83,21 @@ function initSocket(server) {
         try {
             const conn = await pool.getConnection();
             try {
-                const isDriver = role && String(role).toLowerCase() === 'driver';
+                const [driverRows] = await conn.query(
+                    "SELECT id FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                    [userId || 0, phone]
+                );
                 let activeRideId = null;
 
-                if (isDriver) {
-                    const [driverRows] = await conn.query(
-                        "SELECT id FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
-                        [userId || 0, phone]
+                if (driverRows.length > 0) {
+                    const [rides] = await conn.query(
+                        "SELECT Ride_ID_Pk FROM ride_history WHERE Driver_ID_Fk = ? AND Ride_Status IN ('Accepted', 'Arrived', 'Started') LIMIT 1",
+                        [driverRows[0].id]
                     );
-                    if (driverRows.length > 0) {
-                        const [rides] = await conn.query(
-                            "SELECT Ride_ID_Pk FROM ride_history WHERE Driver_ID_Fk = ? AND Ride_Status IN ('Accepted', 'Arrived', 'Started') LIMIT 1",
-                            [driverRows[0].id]
-                        );
-                        if (rides.length > 0) activeRideId = rides[0].Ride_ID_Pk;
-                    }
-                } else {
+                    if (rides.length > 0) activeRideId = rides[0].Ride_ID_Pk;
+                }
+
+                if (!activeRideId) {
                     const [rides] = await conn.query(
                         "SELECT Ride_ID_Pk FROM ride_history WHERE User_ID_Fk = ? AND Ride_Status IN ('Requested', 'Accepted', 'Arrived', 'Started') LIMIT 1",
                         [userId]
