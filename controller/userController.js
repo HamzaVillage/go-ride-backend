@@ -1,4 +1,5 @@
 const pool = require('../db/Connect_Db');
+const { uploadToS3 } = require('../utils/s3Service');
 
 const userController = {
     getProfile: async (req, res) => {
@@ -157,7 +158,7 @@ const userController = {
             return res.status(400).json({ success: false, message: "No file uploaded" });
         }
 
-        const fileName = req.file.filename;
+        const fileName = await uploadToS3(req.file, 'profiles');
         let conn;
         try {
             conn = await pool.getConnection();
@@ -250,11 +251,16 @@ const userController = {
                 return res.status(400).json({ success: false, message: "A driver with this phone number is already registered" });
             }
 
-            // Extract file paths if uploaded
-            const photo_path = req.files && req.files['Photo'] ? req.files['Photo'][0].filename : null;
-            const cnic_front_path = req.files && req.files['CNIC_Front'] ? req.files['CNIC_Front'][0].filename : null;
-            const cnic_back_path = req.files && req.files['CNIC_Back'] ? req.files['CNIC_Back'][0].filename : null;
-            const license_path = req.files && req.files['License'] ? req.files['License'][0].filename : null;
+            // Extract and upload files to S3
+            const photoFile = req.files && req.files['Photo'] ? req.files['Photo'][0] : null;
+            const cnicFrontFile = req.files && req.files['CNIC_Front'] ? req.files['CNIC_Front'][0] : null;
+            const cnicBackFile = req.files && req.files['CNIC_Back'] ? req.files['CNIC_Back'][0] : null;
+            const licenseFile = req.files && req.files['License'] ? req.files['License'][0] : null;
+
+            const photo_path = photoFile ? await uploadToS3(photoFile, 'drivers') : null;
+            const cnic_front_path = cnicFrontFile ? await uploadToS3(cnicFrontFile, 'cnic') : null;
+            const cnic_back_path = cnicBackFile ? await uploadToS3(cnicBackFile, 'cnic') : null;
+            const license_path = licenseFile ? await uploadToS3(licenseFile, 'licenses') : null;
 
             // Generate driver code (e.g., DRV-123456)
             const driver_code = 'DRV-' + Math.floor(100000 + Math.random() * 900000);

@@ -6,30 +6,8 @@ const fs = require('fs');
 const userController = require('../controller/userController');
 const authMiddleware = require('../utils/authMiddleware');
 
-// Configure Multer Storage
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        const uploadDir = process.env.UPLOAD_DIR || 'uploads/';
-        try {
-            if (!fs.existsSync(uploadDir)) {
-                fs.mkdirSync(uploadDir, { recursive: true });
-            }
-            cb(null, uploadDir);
-        } catch (err) {
-            console.warn(`⚠️ Access to UPLOAD_DIR '${uploadDir}' failed (${err.message}). Falling back to local 'uploads/'`);
-            const fallbackDir = 'uploads/';
-            if (!fs.existsSync(fallbackDir)) {
-                fs.mkdirSync(fallbackDir, { recursive: true });
-            }
-            cb(null, fallbackDir);
-        }
-    },
-    filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        const ext = path.extname(file.originalname);
-        cb(null, file.fieldname + '_' + uniqueSuffix + ext);
-    }
-});
+// Configure Multer Storage to keep files in memory buffer for S3 upload
+const storage = multer.memoryStorage();
 
 const maxFileSizeMB = parseInt(process.env.MAX_FILE_SIZE_MB, 10) || 50;
 
