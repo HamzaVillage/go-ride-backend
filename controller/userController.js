@@ -1,5 +1,4 @@
 const pool = require('../db/Connect_Db');
-const { uploadToS3 } = require('../utils/s3Service');
 
 const userController = {
     getProfile: async (req, res) => {
@@ -50,7 +49,8 @@ const userController = {
             const [rows] = await conn.query(
                 `SELECT id, full_name, father_name, cnic, phone, email, address, city, dob,
                         vehicle_type, vehicle_model, vehicle_number, vehicle_color,
-                        photo_path, Rating, join_date, completed_rides_count,
+                        photo_path, cnic_front_path, cnic_back_path, license_path,
+                        Rating, join_date, completed_rides_count,
                         Easypaisa, Easypaisa_Active, JazzCash, JazzCash_Active
                  FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')`,
                 [user.userId || 0, user.phone]
@@ -158,7 +158,7 @@ const userController = {
             return res.status(400).json({ success: false, message: "No file uploaded" });
         }
 
-        const fileName = await uploadToS3(req.file, 'profiles');
+        const fileName = req.file.filename;
         let conn;
         try {
             conn = await pool.getConnection();
@@ -251,16 +251,11 @@ const userController = {
                 return res.status(400).json({ success: false, message: "A driver with this phone number is already registered" });
             }
 
-            // Extract and upload files to S3
-            const photoFile = req.files && req.files['Photo'] ? req.files['Photo'][0] : null;
-            const cnicFrontFile = req.files && req.files['CNIC_Front'] ? req.files['CNIC_Front'][0] : null;
-            const cnicBackFile = req.files && req.files['CNIC_Back'] ? req.files['CNIC_Back'][0] : null;
-            const licenseFile = req.files && req.files['License'] ? req.files['License'][0] : null;
-
-            const photo_path = photoFile ? await uploadToS3(photoFile, 'drivers') : null;
-            const cnic_front_path = cnicFrontFile ? await uploadToS3(cnicFrontFile, 'cnic') : null;
-            const cnic_back_path = cnicBackFile ? await uploadToS3(cnicBackFile, 'cnic') : null;
-            const license_path = licenseFile ? await uploadToS3(licenseFile, 'licenses') : null;
+            // Extract file paths from uploaded files
+            const photo_path = req.files && req.files['Photo'] ? req.files['Photo'][0].filename : null;
+            const cnic_front_path = req.files && req.files['CNIC_Front'] ? req.files['CNIC_Front'][0].filename : null;
+            const cnic_back_path = req.files && req.files['CNIC_Back'] ? req.files['CNIC_Back'][0].filename : null;
+            const license_path = req.files && req.files['License'] ? req.files['License'][0].filename : null;
 
             // Generate driver code (e.g., DRV-123456)
             const driver_code = 'DRV-' + Math.floor(100000 + Math.random() * 900000);
@@ -273,6 +268,13 @@ const userController = {
             );
             if (matchingUser.length > 0) {
                 userIdFK = matchingUser[0].User_ID_Pk;
+                if (photo_path) {
+                    try {
+                        await conn.query("UPDATE users SET User_Pic = ? WHERE User_ID_Pk = ?", [photo_path, userIdFK]);
+                    } catch (e) {
+                        console.warn("Could not update existing user User_Pic:", e.message);
+                    }
+                }
             } else {
                 // Create user record in users table if it does not exist
                 const crypto = require('crypto');
@@ -281,9 +283,9 @@ const userController = {
                 const hashedPassword = await bcrypt.hash(Password || '12345', 10);
 
                 const [newUserResult] = await conn.query(
-                    `INSERT INTO users (User_Name, Email, Password, Mobile, Role, Unique_ID) 
-                     VALUES (?, ?, ?, ?, ?, ?)`,
-                    [Name, Email || null, hashedPassword, normalizedPhone, 'driver', uniqueId]
+                    `INSERT INTO users (User_Name, Email, Password, Mobile, Role, Unique_ID, User_Pic) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                    [Name, Email || null, hashedPassword, normalizedPhone, 'driver', uniqueId, photo_path || null]
                 );
                 userIdFK = newUserResult.insertId;
             }
