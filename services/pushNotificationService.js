@@ -140,10 +140,61 @@ async function notifyDriver(driverId, title, body, data = {}) {
     }
 }
 
+/**
+ * Send a silent, data-only push to wake up the target device in the background
+ * and fetch its current GPS location without showing any user alert/sound.
+ */
+async function sendSilentLocationPing(token, targetUserId, requesterId = null) {
+    const fb = getFirebaseAdmin();
+    if (!fb) {
+        console.log('🔔 [FCM] sendSilentLocationPing: Firebase Admin not initialized, skip');
+        return false;
+    }
+    if (!token) {
+        console.log('🔔 [FCM] sendSilentLocationPing: no token, skip');
+        return false;
+    }
+
+    try {
+        const message = {
+            token,
+            data: {
+                type: 'REQUEST_LIVE_LOCATION',
+                targetUserId: String(targetUserId),
+                requesterId: String(requesterId || ''),
+                timestamp: String(Date.now()),
+            },
+            android: {
+                priority: 'high',
+            },
+            apns: {
+                payload: {
+                    aps: {
+                        contentAvailable: true,
+                    },
+                },
+                headers: {
+                    'apns-priority': '5',
+                    'apns-push-type': 'background',
+                },
+            },
+        };
+
+        console.log('🔔 [FCM] Sending silent location ping to user:', targetUserId, `token=${tokenPreview(token)}`);
+        const msgId = await fb.messaging().send(message);
+        console.log('🔔 [FCM] Silent location ping sent successfully messageId=', msgId);
+        return true;
+    } catch (e) {
+        console.warn('🔔 [FCM] Silent location ping error:', e?.message || e);
+        return false;
+    }
+}
+
 module.exports = {
     getFcmTokenForUser,
     getFcmTokenForDriver,
     sendPushToDevice,
+    sendSilentLocationPing,
     notifyCustomer,
     notifyDriver,
     ANDROID_CHANNEL_ID,

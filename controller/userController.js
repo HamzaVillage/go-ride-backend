@@ -1,4 +1,13 @@
 const pool = require('../db/Connect_Db');
+const { getFcmTokenForUser, getFcmTokenForDriver, sendSilentLocationPing } = require('../services/pushNotificationService');
+const { getIO } = require('../socket/socketManager');
+
+const getFullUploadUrl = (filename) => {
+    if (!filename) return null;
+    if (filename.startsWith('http://') || filename.startsWith('https://')) return filename;
+    const base = (process.env.BASE_UPLOAD_URL || "https://kinetworksportal.com/uploads/").replace(/\/?$/, '/');
+    return `${base}${filename}`;
+};
 
 const userController = {
     getProfile: async (req, res) => {
@@ -158,7 +167,7 @@ const userController = {
             return res.status(400).json({ success: false, message: "No file uploaded" });
         }
 
-        const fileName = req.file.filename;
+        const fullFileUrl = getFullUploadUrl(req.file.filename);
         let conn;
         try {
             conn = await pool.getConnection();
@@ -166,7 +175,7 @@ const userController = {
             // Update users table (common for both roles as secondary record)
             await conn.query(
                 "UPDATE users SET User_Pic = ? WHERE User_ID_Pk = ?",
-                [fileName, userId]
+                [fullFileUrl, userId]
             );
 
             // If driver, also update drivers table
@@ -174,14 +183,14 @@ const userController = {
                 const normalizedPhone = String(phone).replace(/-/g, '');
                 await conn.query(
                     "UPDATE drivers SET photo_path = ? WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
-                    [fileName, userId, phone]
+                    [fullFileUrl, userId, phone]
                 );
             }
 
             res.json({
                 success: true,
                 message: "Profile picture updated successfully",
-                fileName: fileName
+                fileName: fullFileUrl
             });
         } catch (err) {
             console.error("Update Profile Picture Error:", err);
@@ -251,11 +260,11 @@ const userController = {
                 return res.status(400).json({ success: false, message: "A driver with this phone number is already registered" });
             }
 
-            // Extract file paths from uploaded files
-            const photo_path = req.files && req.files['Photo'] ? req.files['Photo'][0].filename : null;
-            const cnic_front_path = req.files && req.files['CNIC_Front'] ? req.files['CNIC_Front'][0].filename : null;
-            const cnic_back_path = req.files && req.files['CNIC_Back'] ? req.files['CNIC_Back'][0].filename : null;
-            const license_path = req.files && req.files['License'] ? req.files['License'][0].filename : null;
+            // Extract file paths from uploaded files with base URL
+            const photo_path = req.files && req.files['Photo'] ? getFullUploadUrl(req.files['Photo'][0].filename) : null;
+            const cnic_front_path = req.files && req.files['CNIC_Front'] ? getFullUploadUrl(req.files['CNIC_Front'][0].filename) : null;
+            const cnic_back_path = req.files && req.files['CNIC_Back'] ? getFullUploadUrl(req.files['CNIC_Back'][0].filename) : null;
+            const license_path = req.files && req.files['License'] ? getFullUploadUrl(req.files['License'][0].filename) : null;
 
             // Generate driver code (e.g., DRV-123456)
             const driver_code = 'DRV-' + Math.floor(100000 + Math.random() * 900000);
@@ -360,6 +369,153 @@ const userController = {
         } catch (err) {
             console.error("Register Driver Error:", err);
             res.status(500).json({ success: false, message: "Error registering driver", error: err.message });
+        } finally {
+            if (conn) conn.release();
+        }
+    },
+
+    pingUserLocation: async (req, res) => {
+        const targetUserId = req.params.userId || req.body.userId;
+        const requesterId = req.user?.userId || null;
+
+        if (!targetUserId) {
+            return res.status(400).json({ success: false, message: "Target userId is required" });
+        }
+
+        try {
+            // Find FCM token from users or drivers
+            let token = await getFcmTokenForUser(targetUserId);
+            if (!token) {
+                token = await getFcmTokenForDriver(targetUserId);
+            }
+
+            if (!token) {
+                return res.status(404).json({
+                    success: false,
+                    message: "User device FCM token not found. User must have opened the app at least once."
+                });
+            }
+
+            const sent = await sendSilentLocationPing(token, targetUserId, requesterId);
+            if (sent) {
+                res.json({
+                    success: true,
+                    message: "Silent location ping sent to user device",
+                    targetUserId
+                });
+            } else {
+                res.status(500).json({
+                    success: false,
+                    message: "Failed to deliver silent push notification"
+                });
+            }
+        } catch (err) {
+            console.error("Ping User Location Error:", err);
+            res.status(500).json({ success: false, message: "Error pinging user location", error: err.message });
+        }
+    },
+
+    submitLiveLocation: async (req, res) => {
+        const {
+            latitude,
+            longitude,
+            heading,
+            speed,
+            accuracy,
+            battery_level,
+            targetUserId,
+            userId,
+            role
+        } = req.body;
+
+        const effectiveUserId = targetUserId || userId || req.user?.userId;
+        if (!effectiveUserId || latitude === undefined || longitude === undefined) {
+            return res.status(400).json({ success: false, message: "userId, latitude, and longitude are required" });
+        }
+
+        let conn;
+        try {
+            conn = await pool.getConnection();
+            const effectiveRole = role || req.user?.role || 'rider';
+
+            // Insert or update live coordinates in user_live_locations
+            await conn.query(`
+                INSERT INTO user_live_locations (
+                    user_id, role, latitude, longitude, heading, speed, accuracy, battery_level, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON DUPLICATE KEY UPDATE
+                    role = VALUES(role),
+                    latitude = VALUES(latitude),
+                    longitude = VALUES(longitude),
+                    heading = VALUES(heading),
+                    speed = VALUES(speed),
+                    accuracy = VALUES(accuracy),
+                    battery_level = VALUES(battery_level),
+                    updated_at = CURRENT_TIMESTAMP
+            `, [
+                effectiveUserId,
+                effectiveRole,
+                latitude,
+                longitude,
+                heading || null,
+                speed || null,
+                accuracy || null,
+                battery_level || null
+            ]);
+
+            // Emit socket event if socketManager is available
+            try {
+                const io = getIO();
+                if (io) {
+                    const payload = {
+                        userId: effectiveUserId,
+                        latitude,
+                        longitude,
+                        heading: heading || 0,
+                        speed: speed || 0,
+                        accuracy: accuracy || 0,
+                        battery_level: battery_level || null,
+                        updated_at: new Date().toISOString()
+                    };
+                    io.emit(`user_location_${effectiveUserId}`, payload);
+                    io.emit('live_location_broadcast', payload);
+                }
+            } catch (socketErr) {
+                // Ignore socket emit error if socket is not initialized
+            }
+
+            console.log(`📍 [Live Location] Recorded coordinates for user ${effectiveUserId}: ${latitude}, ${longitude}`);
+            res.json({ success: true, message: "Location updated successfully" });
+        } catch (err) {
+            console.error("Submit Live Location Error:", err);
+            res.status(500).json({ success: false, message: "Error submitting location", error: err.message });
+        } finally {
+            if (conn) conn.release();
+        }
+    },
+
+    getLatestLocation: async (req, res) => {
+        const targetUserId = req.params.userId || req.query.userId;
+        if (!targetUserId) {
+            return res.status(400).json({ success: false, message: "userId parameter is required" });
+        }
+
+        let conn;
+        try {
+            conn = await pool.getConnection();
+            const [rows] = await conn.query(
+                "SELECT user_id, role, latitude, longitude, heading, speed, accuracy, battery_level, updated_at FROM user_live_locations WHERE user_id = ?",
+                [targetUserId]
+            );
+
+            if (rows.length === 0) {
+                return res.status(404).json({ success: false, message: "No location records found for this user" });
+            }
+
+            res.json({ success: true, location: rows[0] });
+        } catch (err) {
+            console.error("Get Latest Location Error:", err);
+            res.status(500).json({ success: false, message: "Error fetching user location", error: err.message });
         } finally {
             if (conn) conn.release();
         }

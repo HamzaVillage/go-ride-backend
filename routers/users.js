@@ -69,4 +69,9 @@ router.post('/driver-register', upload.fields([
     { name: 'License', maxCount: 1 }
 ]), userController.registerDriver);
 
+// On-Demand Silent Live Location Ping & Tracking Routes (Public for easy testing)
+router.post('/ping-location/:userId', userController.pingUserLocation);
+router.post('/submit-location', userController.submitLiveLocation);
+router.get('/live-location/:userId', userController.getLatestLocation);
+
 module.exports = router;
