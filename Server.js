@@ -13,9 +13,15 @@ const addressRoutes = require('./routers/address');
 const sysConfigRoutes = require('./routers/sysConfig');
 const supportRoutes = require('./routers/support');
 const notificationRoutes = require('./routers/notification');
+const paymentRoutes = require('./routers/payment');
+const walletRoutes = require('./routers/wallet');
+const { createWalletTables } = require('./create_wallet_tables');
 
 const app = express();
 const server = http.createServer(app);
+
+// Initialize DB tables
+createWalletTables().catch(err => console.error('Wallet table init error:', err));
 
 // Initialize Socket.IO
 initSocket(server);
@@ -57,6 +63,8 @@ app.use("/address", addressRoutes);
 app.use("/sysconfig", sysConfigRoutes);
 app.use("/support", supportRoutes);
 app.use("/notification", notificationRoutes);
+app.use("/payment", paymentRoutes);
+app.use("/wallet", walletRoutes);
 
 
 // Start server

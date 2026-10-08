@@ -381,16 +381,85 @@ const rideController = {
                 [ride_id]
             );
 
+            // Handle Wallet Payment Deduction & Driver Wallet Credit
+            const ride = rides[0];
+            const totalFare = parseFloat(ride.Fare || 0);
+            const orgFee = parseFloat(ride.Organization_Fee || 0);
+            const driverEarning = Math.max(0, totalFare - orgFee);
+            const isWalletPayment = (ride.Payment_Method || '').toLowerCase() === 'wallet';
+            let walletPaid = false;
+
+            if (isWalletPayment && ride.User_ID_Fk && totalFare > 0) {
+                try {
+                    const [walletRows] = await conn.query(
+                        "SELECT balance FROM user_wallets WHERE user_id = ? FOR UPDATE",
+                        [ride.User_ID_Fk]
+                    );
+                    const userBalance = parseFloat(walletRows[0]?.balance || 0);
+
+                    if (userBalance >= totalFare) {
+                        // 1. Deduct from rider's wallet
+                        await conn.query(
+                            "UPDATE user_wallets SET balance = balance - ? WHERE user_id = ?",
+                            [totalFare, ride.User_ID_Fk]
+                        );
+
+                        // 2. Insert debit transaction record
+                        await conn.query(
+                            `INSERT INTO user_wallet_transactions (
+                                user_id, amount, transaction_type, payment_method, description, reference_id, ride_id, status, created_at
+                            ) VALUES (?, ?, 'debit', 'ride_fare', ?, ?, ?, 'completed', NOW())`,
+                            [
+                                ride.User_ID_Fk,
+                                totalFare,
+                                `Payment for Ride #${ride_id}`,
+                                `RIDE_PAY_${ride_id}`,
+                                ride_id
+                            ]
+                        );
+
+                        // 3. Credit driver's wallet
+                        if (ride.Driver_ID_Fk) {
+                            await conn.query(
+                                `INSERT INTO driver_wallet (
+                                    driver_id, transaction_type, amount, description, reference_id, payment_method, status, created_at
+                                ) VALUES (?, 'credit', ?, ?, ?, 'wallet', 'completed', NOW())`,
+                                [
+                                    ride.Driver_ID_Fk,
+                                    driverEarning,
+                                    `Fare credit for Ride #${ride_id}`,
+                                    `RIDE_CREDIT_${ride_id}`
+                                ]
+                            ).catch(e => console.warn('Driver wallet insert warning:', e.message));
+                        }
+
+                        // 4. Mark ride as Paid in ride_history
+                        await conn.query(
+                            "UPDATE ride_history SET Payment_Status = 'Paid', Payment_Method = 'Wallet' WHERE Ride_ID_Pk = ?",
+                            [ride_id]
+                        ).catch(() => {});
+
+                        walletPaid = true;
+                        console.log(`💳 [Wallet] Ride #${ride_id} successfully paid via Rider #${ride.User_ID_Fk} wallet (PKR ${totalFare}).`);
+                    } else {
+                        // Insufficient wallet balance -> fallback to cash collection
+                        console.warn(`⚠️ [Wallet] Rider #${ride.User_ID_Fk} has insufficient balance (PKR ${userBalance} < PKR ${totalFare}). Fallback to Cash.`);
+                        await conn.query(
+                            "UPDATE ride_history SET Payment_Method = 'Cash', Payment_Status = 'Unpaid' WHERE Ride_ID_Pk = ?",
+                            [ride_id]
+                        ).catch(() => {});
+                    }
+                } catch (walletErr) {
+                    console.error("❌ Wallet deduction error:", walletErr.message);
+                }
+            }
+
             // Insert driver earning (one row per completed ride)
             try {
-                const ride = rides[0];
-                const totalFare = parseFloat(ride.Fare || 0);
-                const orgFee = parseFloat(ride.Organization_Fee || 0);
-                const driverEarning = Math.max(0, totalFare - orgFee);
                 await conn.query(
                     `INSERT INTO driver_earnings (Ride_ID_Fk, Driver_ID_Fk, Total_Fare, Organization_Fee, Driver_Earning, Payment_Method, Vehicle_Type, Earned_At)
                      VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
-                    [ride_id, ride.Driver_ID_Fk, totalFare, orgFee, driverEarning, ride.Payment_Method || 'Cash', ride.Vehicle_Type || null]
+                    [ride_id, ride.Driver_ID_Fk, totalFare, orgFee, driverEarning, walletPaid ? 'Wallet' : (ride.Payment_Method || 'Cash'), ride.Vehicle_Type || null]
                 );
             } catch (earnErr) {
                 console.error("Driver earning insert (non-blocking):", earnErr.message);
@@ -947,10 +1016,37 @@ const rideController = {
                 };
             }
 
+            // Calculate driver wallet balance from driver_wallet table
+            let wallet_balance = 0.00;
+            try {
+                const [walletRows] = await conn.query(
+                    `SELECT 
+                        COALESCE(SUM(CASE WHEN transaction_type = 'credit' AND status = 'completed' THEN amount ELSE 0 END), 0) -
+                        COALESCE(SUM(CASE WHEN transaction_type = 'debit' AND status = 'completed' THEN amount ELSE 0 END), 0) as balance
+                     FROM driver_wallet WHERE driver_id = ?`,
+                    [driver.id]
+                );
+                wallet_balance = parseFloat(walletRows[0]?.balance || 0);
+
+                // If driver_wallet is 0, check user_wallets for User_ID_FK
+                if (wallet_balance === 0 && driver.User_ID_FK) {
+                    const [userWRows] = await conn.query(
+                        "SELECT balance FROM user_wallets WHERE user_id = ?",
+                        [driver.User_ID_FK]
+                    );
+                    if (userWRows.length > 0 && parseFloat(userWRows[0].balance || 0) > 0) {
+                        wallet_balance = parseFloat(userWRows[0].balance);
+                    }
+                }
+            } catch (wErr) {
+                console.warn("Could not query driver wallet balance:", wErr.message);
+            }
+
             res.json({
                 success: true,
                 driver: {
                     ...driver,
+                    wallet_balance: parseFloat(wallet_balance.toFixed(2)),
                     total_reviews: reviewStats[0]?.total_reviews || 0,
                     avg_rating: reviewStats[0]?.avg_rating ? parseFloat(reviewStats[0].avg_rating).toFixed(1) : '0.0',
                     total_rides: rideStats[0]?.total_rides || 0,
@@ -1002,7 +1098,7 @@ const rideController = {
             conn = await pool.getConnection();
 
             const [driverRows] = await conn.query(
-                "SELECT id FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                "SELECT id, User_ID_FK FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
                 [user.userId || 0, user.phone]
             );
             if (driverRows.length === 0) {
@@ -1070,9 +1166,35 @@ const rideController = {
                 };
             }
 
+            // Calculate wallet balance for driver
+            let driver_wallet_balance = 0.00;
+            try {
+                const [walletRows] = await conn.query(
+                    `SELECT 
+                        COALESCE(SUM(CASE WHEN transaction_type = 'credit' AND status = 'completed' THEN amount ELSE 0 END), 0) -
+                        COALESCE(SUM(CASE WHEN transaction_type = 'debit' AND status = 'completed' THEN amount ELSE 0 END), 0) as balance
+                     FROM driver_wallet WHERE driver_id = ?`,
+                    [driverId]
+                );
+                driver_wallet_balance = parseFloat(walletRows[0]?.balance || 0);
+
+                if (driver_wallet_balance === 0 && driverRows[0]?.User_ID_FK) {
+                    const [userWRows] = await conn.query(
+                        "SELECT balance FROM user_wallets WHERE user_id = ?",
+                        [driverRows[0].User_ID_FK]
+                    );
+                    if (userWRows.length > 0 && parseFloat(userWRows[0].balance || 0) > 0) {
+                        driver_wallet_balance = parseFloat(userWRows[0].balance);
+                    }
+                }
+            } catch (wErr) {
+                console.warn("Could not query driver wallet balance:", wErr.message);
+            }
+
             const summary = {
                 total_rides: summaryRows[0]?.total_rides || 0,
                 total_earning: parseFloat(summaryRows[0]?.total_earning || 0),
+                wallet_balance: parseFloat(driver_wallet_balance.toFixed(2)),
             };
 
             res.json({ success: true, data: rows, summary, overdue_info });
