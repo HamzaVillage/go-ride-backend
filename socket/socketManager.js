@@ -1,6 +1,7 @@
 const { Server } = require("socket.io");
 const jwt = require("jsonwebtoken");
 const pool = require("../db/Connect_Db");
+const { getDriverWalletBalance, getVehicleMinWalletLimit } = require("../utils/driverHelper");
 
 let io;
 
@@ -124,7 +125,7 @@ function initSocket(server) {
                 const conn = await pool.getConnection();
                 try {
                     const [rows] = await conn.query(
-                        "SELECT id, vehicle_type, overdue_since, completed_rides_count FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                        "SELECT id, User_ID_FK, vehicle_type, overdue_since, completed_rides_count FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
                         [userId || 0, phone]
                     );
                     if (rows.length === 0) {
@@ -133,6 +134,21 @@ function initSocket(server) {
                     }
                     const driver = rows[0];
                     const dbVehicleType = (vehicle_type || driver.vehicle_type || 'mini').toLowerCase();
+
+                    // Check dynamic minimum wallet limit from vehicle_fare_rate
+                    const wallet_balance = await getDriverWalletBalance(conn, driver.id, driver.User_ID_FK);
+                    const min_wallet_balance = await getVehicleMinWalletLimit(conn, driver.vehicle_type || dbVehicleType);
+
+                    if (wallet_balance < min_wallet_balance) {
+                        socket.emit("driver:online:ack", {
+                            success: false,
+                            topup_required: true,
+                            wallet_balance,
+                            min_wallet_balance,
+                            message: `Your wallet balance (Rs. ${wallet_balance.toFixed(2)}) is below the required minimum (Rs. ${min_wallet_balance.toFixed(2)}). Please top up your wallet to go online.`
+                        });
+                        return;
+                    }
 
                     const totalRides = parseInt(driver.completed_rides_count || 0, 10);
                     let vehicleRidesLimit = 0;

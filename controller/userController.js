@@ -1,6 +1,7 @@
 const pool = require('../db/Connect_Db');
 const { getFcmTokenForUser, getFcmTokenForDriver, sendSilentLocationPing } = require('../services/pushNotificationService');
 const { getIO } = require('../socket/socketManager');
+const { formatDriverCode } = require('../utils/driverHelper');
 
 const getFullUploadUrl = (filename) => {
     if (!filename) return null;
@@ -65,7 +66,14 @@ const userController = {
                 [user.userId || 0, user.phone]
             );
             if (rows.length === 0) return res.status(404).json({ success: false, message: "Driver profile not found" });
-            res.json({ success: true, data: rows[0] });
+            const driverRow = rows[0];
+            res.json({
+                success: true,
+                data: {
+                    ...driverRow,
+                    driver_code: formatDriverCode(driverRow.id),
+                }
+            });
         } catch (err) {
             console.error("Get Driver Account Error:", err);
             res.status(500).json({ success: false, message: "Error fetching driver account", error: err.message });
@@ -266,8 +274,7 @@ const userController = {
             const cnic_back_path = req.files && req.files['CNIC_Back'] ? getFullUploadUrl(req.files['CNIC_Back'][0].filename) : null;
             const license_path = req.files && req.files['License'] ? getFullUploadUrl(req.files['License'][0].filename) : null;
 
-            // Generate driver code (e.g., DRV-123456)
-            const driver_code = 'DRV-' + Math.floor(100000 + Math.random() * 900000);
+            // Driver code (GRD-1000+id) will be derived after insert
 
             // Match to existing user if phone exists
             let userIdFK = null;
@@ -340,9 +347,9 @@ const userController = {
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), ?)
             `;
 
-            await conn.query(query, [
+            const [driverResult] = await conn.query(query, [
                 userIdFK,
-                driver_code,
+                null,
                 Name,
                 FatherName || null,
                 dbCnic,
@@ -365,7 +372,15 @@ const userController = {
                 Password || '12345'
             ]);
 
-            res.json({ success: true, message: "Driver registration request submitted successfully!" });
+            const newDriverId = driverResult.insertId;
+            const permanentCode = formatDriverCode(newDriverId);
+            await conn.query("UPDATE drivers SET driver_code = ? WHERE id = ?", [permanentCode, newDriverId]);
+
+            res.json({
+                success: true,
+                message: "Driver registration request submitted successfully!",
+                driver_code: permanentCode,
+            });
         } catch (err) {
             console.error("Register Driver Error:", err);
             res.status(500).json({ success: false, message: "Error registering driver", error: err.message });

@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const pool = require('../db/Connect_Db');
 const { getIO } = require('../socket/socketManager');
 const { notifyCustomer, notifyDriver } = require('../services/pushNotificationService');
+const { formatDriverCode, getDriverWalletBalance, getVehicleMinWalletLimit } = require('../utils/driverHelper');
 
 const rideController = {
     createRide: async (req, res) => {
@@ -108,7 +109,7 @@ const rideController = {
 
             // Derive driver info from JWT for security
             const [driverRows] = await conn.query(
-                "SELECT id, vehicle_type, overdue_since, completed_rides_count FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                "SELECT id, User_ID_FK, vehicle_type, overdue_since, completed_rides_count FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
                 [user.userId || 0, user.phone]
             );
             if (driverRows.length === 0) {
@@ -116,6 +117,19 @@ const rideController = {
             }
             const driver = driverRows[0];
             const driverVehicleType = vehicle_type || driver.vehicle_type || 'Mini';
+
+            // Check dynamic minimum wallet balance limit from vehicle_fare_rate
+            const wallet_balance = await getDriverWalletBalance(conn, driver.id, driver.User_ID_FK);
+            const min_wallet_balance = await getVehicleMinWalletLimit(conn, driverVehicleType);
+            if (wallet_balance < min_wallet_balance) {
+                return res.status(403).json({
+                    success: false,
+                    topup_required: true,
+                    wallet_balance,
+                    min_wallet_balance,
+                    message: `Your wallet balance (Rs. ${wallet_balance.toFixed(2)}) is below the minimum required limit (Rs. ${min_wallet_balance.toFixed(2)}). Please top up your wallet to continue finding rides.`
+                });
+            }
 
             const totalRides = parseInt(driver.completed_rides_count || 0, 10);
             let vehicleRidesLimit = 0;
@@ -193,7 +207,7 @@ const rideController = {
 
             // Derive driver_id from drivers table using User_ID_FK or phone (never trust client)
             const [driverRows] = await conn.query(
-                "SELECT id, full_name, vehicle_type, status FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                "SELECT id, User_ID_FK, full_name, vehicle_type, status FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
                 [user.userId || 0, user.phone]
             );
             if (driverRows.length === 0) {
@@ -202,7 +216,21 @@ const rideController = {
             if (driverRows[0].status && String(driverRows[0].status).toLowerCase() !== 'active') {
                 return res.status(403).json({ success: false, message: "Your driver account is under review or not active." });
             }
-            const driver_id = driverRows[0].id;
+            const driver = driverRows[0];
+            const driver_id = driver.id;
+
+            // Check dynamic minimum wallet balance limit from vehicle_fare_rate
+            const wallet_balance = await getDriverWalletBalance(conn, driver_id, driver.User_ID_FK);
+            const min_wallet_balance = await getVehicleMinWalletLimit(conn, driver.vehicle_type);
+            if (wallet_balance < min_wallet_balance) {
+                return res.status(403).json({
+                    success: false,
+                    topup_required: true,
+                    wallet_balance,
+                    min_wallet_balance,
+                    message: `Insufficient wallet balance (Rs. ${wallet_balance.toFixed(2)}). Minimum required balance for ${driver.vehicle_type || 'rides'} is Rs. ${min_wallet_balance.toFixed(2)}. Please top up your wallet to accept rides.`
+                });
+            }
 
             const [rides] = await conn.query(
                 "SELECT Ride_Status, Driver_ID_Fk FROM ride_history WHERE Ride_ID_Pk = ?",
@@ -1016,37 +1044,19 @@ const rideController = {
                 };
             }
 
-            // Calculate driver wallet balance from driver_wallet table
-            let wallet_balance = 0.00;
-            try {
-                const [walletRows] = await conn.query(
-                    `SELECT 
-                        COALESCE(SUM(CASE WHEN transaction_type = 'credit' AND status = 'completed' THEN amount ELSE 0 END), 0) -
-                        COALESCE(SUM(CASE WHEN transaction_type = 'debit' AND status = 'completed' THEN amount ELSE 0 END), 0) as balance
-                     FROM driver_wallet WHERE driver_id = ?`,
-                    [driver.id]
-                );
-                wallet_balance = parseFloat(walletRows[0]?.balance || 0);
-
-                // If driver_wallet is 0, check user_wallets for User_ID_FK
-                if (wallet_balance === 0 && driver.User_ID_FK) {
-                    const [userWRows] = await conn.query(
-                        "SELECT balance FROM user_wallets WHERE user_id = ?",
-                        [driver.User_ID_FK]
-                    );
-                    if (userWRows.length > 0 && parseFloat(userWRows[0].balance || 0) > 0) {
-                        wallet_balance = parseFloat(userWRows[0].balance);
-                    }
-                }
-            } catch (wErr) {
-                console.warn("Could not query driver wallet balance:", wErr.message);
-            }
+            // Calculate driver wallet balance and dynamic vehicle minimum limit
+            const wallet_balance = await getDriverWalletBalance(conn, driver.id, driver.User_ID_FK);
+            const min_wallet_balance = await getVehicleMinWalletLimit(conn, driver.vehicle_type);
+            const is_wallet_sufficient = wallet_balance >= min_wallet_balance;
 
             res.json({
                 success: true,
                 driver: {
                     ...driver,
+                    driver_code: formatDriverCode(driver.id),
                     wallet_balance: parseFloat(wallet_balance.toFixed(2)),
+                    min_wallet_balance: parseFloat(min_wallet_balance.toFixed(2)),
+                    is_wallet_sufficient,
                     total_reviews: reviewStats[0]?.total_reviews || 0,
                     avg_rating: reviewStats[0]?.avg_rating ? parseFloat(reviewStats[0].avg_rating).toFixed(1) : '0.0',
                     total_rides: rideStats[0]?.total_rides || 0,
@@ -1167,34 +1177,14 @@ const rideController = {
             }
 
             // Calculate wallet balance for driver
-            let driver_wallet_balance = 0.00;
-            try {
-                const [walletRows] = await conn.query(
-                    `SELECT 
-                        COALESCE(SUM(CASE WHEN transaction_type = 'credit' AND status = 'completed' THEN amount ELSE 0 END), 0) -
-                        COALESCE(SUM(CASE WHEN transaction_type = 'debit' AND status = 'completed' THEN amount ELSE 0 END), 0) as balance
-                     FROM driver_wallet WHERE driver_id = ?`,
-                    [driverId]
-                );
-                driver_wallet_balance = parseFloat(walletRows[0]?.balance || 0);
-
-                if (driver_wallet_balance === 0 && driverRows[0]?.User_ID_FK) {
-                    const [userWRows] = await conn.query(
-                        "SELECT balance FROM user_wallets WHERE user_id = ?",
-                        [driverRows[0].User_ID_FK]
-                    );
-                    if (userWRows.length > 0 && parseFloat(userWRows[0].balance || 0) > 0) {
-                        driver_wallet_balance = parseFloat(userWRows[0].balance);
-                    }
-                }
-            } catch (wErr) {
-                console.warn("Could not query driver wallet balance:", wErr.message);
-            }
+            const driver_wallet_balance = await getDriverWalletBalance(conn, driverId, driverRows[0]?.User_ID_FK);
+            const min_wallet_balance = await getVehicleMinWalletLimit(conn, driverRows[0]?.vehicle_type);
 
             const summary = {
                 total_rides: summaryRows[0]?.total_rides || 0,
                 total_earning: parseFloat(summaryRows[0]?.total_earning || 0),
                 wallet_balance: parseFloat(driver_wallet_balance.toFixed(2)),
+                min_wallet_balance: parseFloat(min_wallet_balance.toFixed(2)),
             };
 
             res.json({ success: true, data: rows, summary, overdue_info });

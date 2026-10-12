@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const axios = require('axios');
 const FormData = require('form-data');
+const { formatDriverCode } = require('../utils/driverHelper');
 
 const REVIEW_NUMBERS = ['03112032255', '03112032256'];
 const STATIC_OTP = '123456';
@@ -151,7 +152,11 @@ const authController = {
             if (user.Role === 'driver') {
                 const [driverRows] = await conn.query("SELECT * FROM drivers WHERE phone = ?", [phone_number]);
                 if (driverRows.length > 0) {
-                    responseData.driver_profile = driverRows[0];
+                    const d = driverRows[0];
+                    responseData.driver_profile = {
+                        ...d,
+                        driver_code: formatDriverCode(d.id),
+                    };
                 }
             }
 
@@ -471,7 +476,10 @@ const authController = {
                     phone: driver.phone,
                     role: 'driver'
                 },
-                driver_profile: driver
+                driver_profile: {
+                    ...driver,
+                    driver_code: formatDriverCode(driver.id),
+                }
             });
         } catch (err) {
             console.error("Driver Verify OTP Error:", err);
