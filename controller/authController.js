@@ -131,7 +131,7 @@ const authController = {
             const token = jwt.sign(
                 { userId: user.User_ID_Pk, role: user.Role, phone: user.Mobile },
                 process.env.JWT_SECRET || 'your_fallback_secret',
-                { expiresIn: '365d' }
+                { expiresIn: '3650d' } // 10 years lifetime session
             );
 
             const responseData = {
@@ -463,7 +463,7 @@ const authController = {
             const token = jwt.sign(
                 { userId, role: 'driver', phone: phone },
                 process.env.JWT_SECRET || 'your_fallback_secret',
-                { expiresIn: '365d' }
+                { expiresIn: '3650d' } // 10 years lifetime session
             );
 
             res.json({
