@@ -962,7 +962,13 @@
                     "name": "Send Notification",
                     "request": {
                         "method": "POST",
-                        "header": [],
+                        "header": [
+                            {
+                                "key": "x-admin-api-key",
+                                "value": "goride_admin_secure_key_2026",
+                                "type": "text"
+                            }
+                        ],
                         "body": {
                             "mode": "raw",
                             "raw": "{\n    \"target\": \"role\",\n    \"role\": \"driver\",\n    \"title\": \"Update Available\",\n    \"body\": \"Please update your app to the latest version for new features!\",\n    \"data\": {\n        \"type\": \"admin_update\"\n    }\n}",

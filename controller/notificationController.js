@@ -99,8 +99,6 @@ const notificationController = {
         } catch (err) {
             console.error("Admin Notification Error:", err);
             res.status(500).json({ success: false, message: "Server error while sending notifications.", error: err.message });
-        } finally {
-            if (conn) conn.release();
         }
     }
 };

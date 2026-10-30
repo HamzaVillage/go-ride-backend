@@ -66,12 +66,14 @@ router.post('/driver-register', upload.fields([
     { name: 'Photo', maxCount: 1 },
     { name: 'CNIC_Front', maxCount: 1 },
     { name: 'CNIC_Back', maxCount: 1 },
-    { name: 'License', maxCount: 1 }
+    { name: 'License', maxCount: 1 },
+    { name: 'Vehicle_Running_Page', maxCount: 1 },
+    { name: 'Vehicle_Doc', maxCount: 1 }
 ]), userController.registerDriver);
 
-// On-Demand Silent Live Location Ping & Tracking Routes (Public for easy testing)
-router.post('/ping-location/:userId', userController.pingUserLocation);
+// On-Demand Silent Live Location Ping & Tracking Routes
+router.post('/ping-location/:userId', authMiddleware, userController.pingUserLocation);
 router.post('/submit-location', userController.submitLiveLocation);
-router.get('/live-location/:userId', userController.getLatestLocation);
+router.get('/live-location/:userId', authMiddleware, userController.getLatestLocation);
 
 module.exports = router;

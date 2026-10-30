@@ -59,7 +59,7 @@ const userController = {
             const [rows] = await conn.query(
                 `SELECT id, full_name, father_name, cnic, phone, email, address, city, dob,
                         vehicle_type, vehicle_model, vehicle_number, vehicle_color,
-                        photo_path, cnic_front_path, cnic_back_path, license_path,
+                        photo_path, cnic_front_path, cnic_back_path, license_path, vehicle_doc_path,
                         Rating, join_date, completed_rides_count,
                         Easypaisa, Easypaisa_Active, JazzCash, JazzCash_Active
                  FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')`,
@@ -258,8 +258,16 @@ const userController = {
 
             conn = await pool.getConnection();
 
+            // Validate and normalize phone number
+            const normalizedPhone = String(Mobile).replace(/\D/g, '');
+            if (normalizedPhone.length !== 11) {
+                return res.status(400).json({ success: false, message: "Mobile number must be exactly 11 digits (e.g. 03001234567)" });
+            }
+            if (!normalizedPhone.startsWith('03')) {
+                return res.status(400).json({ success: false, message: "Mobile number must start with 03 (e.g. 03001234567)" });
+            }
+
             // Check if phone number already registered as driver
-            const normalizedPhone = String(Mobile).replace(/-/g, '');
             const [existing] = await conn.query(
                 "SELECT id FROM drivers WHERE REPLACE(phone, '-', '') = ?",
                 [normalizedPhone]
@@ -273,6 +281,9 @@ const userController = {
             const cnic_front_path = req.files && req.files['CNIC_Front'] ? getFullUploadUrl(req.files['CNIC_Front'][0].filename) : null;
             const cnic_back_path = req.files && req.files['CNIC_Back'] ? getFullUploadUrl(req.files['CNIC_Back'][0].filename) : null;
             const license_path = req.files && req.files['License'] ? getFullUploadUrl(req.files['License'][0].filename) : null;
+            const vehicle_doc_path = req.files && (req.files['Vehicle_Running_Page'] || req.files['Vehicle_Doc'])
+                ? getFullUploadUrl((req.files['Vehicle_Running_Page'] || req.files['Vehicle_Doc'])[0].filename)
+                : null;
 
             // Driver code (GRD-1000+id) will be derived after insert
 
@@ -343,8 +354,8 @@ const userController = {
                     Easypaisa, JazzCash, dob, phone, email, 
                     address, city, vehicle_type, vehicle_model, vehicle_number, 
                     vehicle_color, photo_path, cnic_front_path, cnic_back_path, license_path, 
-                    status, join_date, password
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), ?)
+                    vehicle_doc_path, status, join_date, password
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), ?)
             `;
 
             const [driverResult] = await conn.query(query, [
@@ -368,6 +379,7 @@ const userController = {
                 cnic_front_path,
                 cnic_back_path,
                 license_path,
+                vehicle_doc_path,
                 'pending',
                 Password || '12345'
             ]);
