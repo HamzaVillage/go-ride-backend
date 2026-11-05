@@ -1,4 +1,9 @@
+const { settleRideCompletion, completionWalletSummary } = require('../services/rideCompletionSettlement');
+const { deleteRideChat, closeChatRoom } = require('../services/rideChatService');
 const crypto = require('crypto');
+const { cache } = require('../services/redisCache');
+const { expireSearch } = require('../services/rideSearch');
+const { getSearchConfig, getSearchState, getSearchDurationSeconds, category, validCoordinates, matchesRide, getDriverPresence, dispatchRide, nearbyDriverLocations, clearDriverPresence } = require('../services/driverDispatch');
 const pool = require('../db/Connect_Db');
 const { getIO } = require('../socket/socketManager');
 const { notifyCustomer, notifyDriver } = require('../services/pushNotificationService');
@@ -17,7 +22,7 @@ const rideController = {
         // Always use the authenticated user's ID from JWT - never trust the body
         const user_id = req.user.userId;
 
-        if (!user_id || !pickup_location || !drop_location || !pickup_lat || !pickup_lng) {
+        if (!user_id || !pickup_location || !drop_location || !validCoordinates(pickup_lat, pickup_lng) || !validCoordinates(drop_lat, drop_lng) || !category(vehicle_type)) {
             return res.status(400).json({ success: false, message: "Missing required fields for ride creation" });
         }
 
@@ -26,7 +31,7 @@ const rideController = {
             conn = await pool.getConnection();
 
             const [activeRides] = await conn.query(
-                "SELECT * FROM ride_history WHERE User_ID_Fk = ? AND Ride_Status IN ('Requested', 'Accepted', 'Arrived', 'Started', 'Ongoing')",
+                "SELECT *, User_ID_FK AS User_ID_Fk FROM ride_history WHERE User_ID_Fk = ? AND Ride_Status IN ('Requested', 'Accepted', 'Arrived', 'Started', 'Ongoing')",
                 [user_id]
             );
 
@@ -37,6 +42,8 @@ const rideController = {
                     activeRideId: activeRides[0].Ride_ID_Pk
                 });
             }
+
+            await getSearchConfig(conn); // Fail before creating a ride if search settings are invalid.
 
             // Fetch the fee percentage for the vehicle type
             const [rateRows] = await conn.query("SELECT Fee_Percentage FROM vehicle_fare_rate WHERE Vehicle_Type = ?", [vehicle_type]);
@@ -68,13 +75,13 @@ const rideController = {
             try {
                 const io = getIO();
                 const [newRide] = await conn.query(
-                    `SELECT r.*, u.User_Name as rider_name 
+                    `SELECT r.*, r.User_ID_FK AS User_ID_Fk, TIMESTAMPDIFF(SECOND, r.CreatedAt, NOW()) AS Search_Age_Seconds, u.User_Name as rider_name
                      FROM ride_history r 
                      LEFT JOIN users u ON r.User_ID_Fk = u.User_ID_Pk 
                      WHERE r.Ride_ID_Pk = ?`,
                     [result.insertId]
                 );
-                io.to(`vehicle:${vehicle_type.toLowerCase()}`).emit("new_ride_request", {
+                await dispatchRide(io, conn, newRide[0], "new_ride_request", {
                     ride_id: result.insertId,
                     ride: newRide[0]
                 });
@@ -95,11 +102,72 @@ const rideController = {
         }
     },
 
+    getSearchStatus: async (req, res) => {
+        let conn;
+        try {
+            conn = await pool.getConnection();
+            const [rows] = await conn.query(
+                "SELECT *, User_ID_FK AS User_ID_Fk, TIMESTAMPDIFF(SECOND, CreatedAt, NOW()) AS Search_Age_Seconds FROM ride_history WHERE Ride_ID_Pk = ? AND User_ID_Fk = ?",
+                [req.params.rideId, req.user.userId]
+            );
+            if (!rows.length) return res.status(404).json({ success: false, message: 'Ride not found' });
+            const ride = rows[0];
+            let search = null;
+            if (ride.Ride_Status === 'Requested') {
+                search = getSearchState(ride, await getSearchConfig(conn));
+                if (search.exhausted) await expireSearch(conn, getIO(), ride, search);
+            }
+            return res.json({ success: true, rideId: ride.Ride_ID_Pk, status: ride.Ride_Status,
+                no_driver_available: ride.Cancellation_Reason === 'NO_DRIVER_AVAILABLE', search });
+        } catch (err) {
+            console.error('Ride search status error:', err.message);
+            return res.status(500).json({ success: false, message: 'Unable to check ride search' });
+        } finally {
+            if (conn) conn.release();
+        }
+    },
+
+    getNearbyDrivers: async (req, res) => {
+        const { lat, lng, vehicle_type } = req.query;
+        if (!validCoordinates(lat, lng) || (vehicle_type !== undefined && typeof vehicle_type !== 'string')) {
+            return res.status(400).json({ success: false, message: 'Valid map coordinates are required.' });
+        }
+        let conn;
+        // Cached map requests do not even borrow a MySQL connection.
+        const db = { query: async (...args) => {
+            if (!conn) conn = await pool.getConnection();
+            return conn.query(...args);
+        } };
+        try {
+            const config = await getSearchConfig(db);
+            const vehicleTypes = await cache.remember('map:vehicle-types', 30, async () => {
+                const [rows] = await db.query('SELECT Vehicle_Type FROM vehicle_fare_rate WHERE Is_Active = 1');
+                return [...new Set(rows.map(r => category(r.Vehicle_Type)))];
+            });
+            const types = vehicle_type ? vehicleTypes.filter(t => t === category(vehicle_type)) : vehicleTypes;
+            const locations = [];
+            for (const type of types) locations.push(...await nearbyDriverLocations(getIO(), db, Number(lat), Number(lng), config.maxRadiusKm, type));
+            const markers = locations.filter(p => String(p.userId) !== String(req.user.userId))
+                .sort((a, b) => ((a.lat - lat) ** 2 + (a.lng - lng) ** 2) - ((b.lat - lat) ** 2 + (b.lng - lng) ** 2))
+                .slice(0, 30).map(p => ({
+                    id: p.sessionId, vehicle_type: p.vehicle_type,
+                    latitude: Number(Number(p.lat).toFixed(4)), longitude: Number(Number(p.lng).toFixed(4)),
+                    heading: Number(p.heading) || 0, timestamp: p.updatedAt,
+                }));
+            return res.json({ success: true, data: markers });
+        } catch (err) {
+            console.error('Nearby driver map error:', err.message);
+            return res.status(500).json({ success: false, message: 'Unable to load nearby drivers.' });
+        } finally {
+            if (conn) conn.release();
+        }
+    },
+
     getNearbyRides: async (req, res) => {
-        const { driver_lat, driver_lng, vehicle_type } = req.query;
+        const { driver_lat, driver_lng } = req.query;
         const user = req.user;
 
-        if (!driver_lat || !driver_lng) {
+        if (!validCoordinates(driver_lat, driver_lng)) {
             return res.status(400).json({ success: false, message: "Driver location (lat/lng) is required" });
         }
 
@@ -109,14 +177,22 @@ const rideController = {
 
             // Derive driver info from JWT for security
             const [driverRows] = await conn.query(
-                "SELECT id, User_ID_FK, vehicle_type, overdue_since, completed_rides_count FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                "SELECT id, User_ID_FK, vehicle_type, status, Is_Available, overdue_since, completed_rides_count FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
                 [user.userId || 0, user.phone]
             );
             if (driverRows.length === 0) {
                 return res.status(404).json({ success: false, message: "Driver profile not found" });
             }
             const driver = driverRows[0];
-            const driverVehicleType = vehicle_type || driver.vehicle_type || 'Mini';
+            const driverVehicleType = category(driver.vehicle_type);
+            const presence = await getDriverPresence(getIO(), driver.id, user.userId);
+            const [busyRides] = await conn.query(
+                "SELECT Ride_ID_Pk FROM ride_history WHERE Driver_ID_Fk = ? AND Ride_Status IN ('Accepted','Arrived','Started','Ongoing') LIMIT 1",
+                [driver.id]
+            );
+            if (category(driver.status) !== 'active' || Number(driver.Is_Available) !== 1 || !presence || busyRides.length) {
+                return res.json({ success: true, count: 0, driver_vehicle_type: driverVehicleType, data: [] });
+            }
 
             // Check dynamic minimum wallet balance limit from vehicle_fare_rate
             const wallet_balance = await getDriverWalletBalance(conn, driver.id, driver.User_ID_FK);
@@ -164,20 +240,25 @@ const rideController = {
                 }
             }
 
+            const searchConfig = await getSearchConfig(conn);
             const query = `
-                SELECT r.*, u.User_Name as rider_name,
-                (6371 * acos(cos(radians(?)) * cos(radians(Pickup_Lat)) * cos(radians(Pickup_Lng) - radians(?)) + sin(radians(?)) * sin(radians(Pickup_Lat)))) AS distance_km
+                SELECT r.*, r.User_ID_FK AS User_ID_Fk, u.User_Name as rider_name,
+                (6371 * acos(LEAST(1, GREATEST(-1, cos(radians(?)) * cos(radians(Pickup_Lat)) * cos(radians(Pickup_Lng) - radians(?)) + sin(radians(?)) * sin(radians(Pickup_Lat)))))) AS distance_km
                 FROM ride_history r
                 LEFT JOIN users u ON r.User_ID_Fk = u.User_ID_Pk
                 WHERE r.Driver_ID_Fk IS NULL 
                 AND r.Ride_Status = 'Requested'
-                AND r.Vehicle_Type = ?
-                AND r.CreatedAt >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
-                HAVING distance_km < 50
+                AND LOWER(TRIM(r.Vehicle_Type)) = ?
+                AND r.User_ID_Fk <> ?
+                AND TIMESTAMPDIFF(SECOND, r.CreatedAt, NOW()) < ?
+                HAVING distance_km <= LEAST(?, ? + FLOOR(GREATEST(0, TIMESTAMPDIFF(SECOND, r.CreatedAt, NOW())) / ?) * ?)
                 ORDER BY distance_km ASC
+                LIMIT 50
             `;
 
-            const [rides] = await conn.query(query, [driver_lat, driver_lng, driver_lat, driverVehicleType]);
+            const [rides] = await conn.query(query, [presence.lat, presence.lng, presence.lat, driverVehicleType, user.userId,
+                getSearchDurationSeconds(searchConfig),
+                searchConfig.maxRadiusKm, searchConfig.minRadiusKm, searchConfig.stageSeconds, searchConfig.stepKm]);
 
             res.json({
                 success: true,
@@ -202,6 +283,7 @@ const rideController = {
         }
 
         let conn;
+        let transactionOpen = false;
         try {
             conn = await pool.getConnection();
 
@@ -216,7 +298,19 @@ const rideController = {
             if (driverRows[0].status && String(driverRows[0].status).toLowerCase() !== 'active') {
                 return res.status(403).json({ success: false, message: "Your driver account is under review or not active." });
             }
-            const driver = driverRows[0];
+            await conn.beginTransaction();
+            transactionOpen = true;
+
+            // Serialize accept attempts for this driver, including different rides.
+            // Requires drivers and ride_history to use InnoDB (see migration).
+            const [lockedDrivers] = await conn.query(
+                "SELECT id, User_ID_FK, vehicle_type, status, Is_Available FROM drivers WHERE id = ? FOR UPDATE",
+                [driverRows[0].id]
+            );
+            const driver = lockedDrivers[0];
+            if (!driver || category(driver.status) !== 'active' || Number(driver.Is_Available) !== 1) {
+                return res.status(403).json({ success: false, message: "Your driver account is not active." });
+            }
             const driver_id = driver.id;
 
             // Check dynamic minimum wallet balance limit from vehicle_fare_rate
@@ -232,8 +326,16 @@ const rideController = {
                 });
             }
 
+            const [busyRides] = await conn.query(
+                "SELECT Ride_ID_Pk FROM ride_history WHERE Driver_ID_Fk = ? AND Ride_Status IN ('Accepted', 'Arrived', 'Started', 'Ongoing') LIMIT 1",
+                [driver_id]
+            );
+            if (busyRides.length > 0) {
+                return res.status(409).json({ success: false, code: 'DRIVER_BUSY', message: "You already have an active ride.", activeRideId: busyRides[0].Ride_ID_Pk });
+            }
+
             const [rides] = await conn.query(
-                "SELECT Ride_Status, Driver_ID_Fk FROM ride_history WHERE Ride_ID_Pk = ?",
+                "SELECT Ride_Status, Driver_ID_Fk, User_ID_FK AS User_ID_Fk, Vehicle_Type, Pickup_Lat, Pickup_Lng, TIMESTAMPDIFF(SECOND, CreatedAt, NOW()) AS Search_Age_Seconds FROM ride_history WHERE Ride_ID_Pk = ? FOR UPDATE",
                 [ride_id]
             );
 
@@ -243,16 +345,30 @@ const rideController = {
 
             const ride = rides[0];
             if (ride.Ride_Status !== 'Requested' || ride.Driver_ID_Fk !== null) {
-                return res.status(400).json({ success: false, message: "This ride is no longer available" });
+                return res.status(409).json({ success: false, code: 'RIDE_UNAVAILABLE', message: "This ride is no longer available" });
             }
 
-            await conn.query(
-                "UPDATE ride_history SET Driver_ID_Fk = ?, Ride_Status = 'Accepted' WHERE Ride_ID_Pk = ?",
-                [driver_id, ride_id]
+            if (String(ride.User_ID_Fk) === String(user.userId)) {
+                return res.status(403).json({ success: false, message: "You cannot accept your own ride request." });
+            }
+
+            const presence = await getDriverPresence(getIO(), driver_id, user.userId);
+            const search = getSearchState(ride, await getSearchConfig(conn));
+            if (search.exhausted || !matchesRide(presence, ride, search.radius_km) || category(driver.vehicle_type) !== category(ride.Vehicle_Type)) {
+                return res.status(409).json({ success: false, code: 'RIDE_UNAVAILABLE', message: "Go online with a fresh GPS location near the pickup to accept this category." });
+            }
+
+            const [acceptResult] = await conn.query(
+                "UPDATE ride_history SET Driver_ID_Fk = ?, Ride_Status = 'Accepted' WHERE Ride_ID_Pk = ? AND Ride_Status = 'Requested' AND Driver_ID_Fk IS NULL AND TIMESTAMPDIFF(SECOND, CreatedAt, NOW()) < ?",
+                [driver_id, ride_id, search.duration_seconds]
             );
 
+            if (acceptResult.affectedRows !== 1) {
+                return res.status(409).json({ success: false, code: 'RIDE_UNAVAILABLE', message: "This ride is no longer available" });
+            }
+
             const [updatedRide] = await conn.query(
-                `SELECT r.*, d.full_name as driver_name, d.phone as driver_phone, 
+                `SELECT r.*, r.User_ID_FK AS User_ID_Fk, d.full_name as driver_name, d.phone as driver_phone,
                 d.vehicle_type as driver_vehicle_type, d.vehicle_model, d.vehicle_number, 
                 d.vehicle_color, d.photo_path as driver_photo, d.Rating as driver_rating,
                 u.User_Name as rider_name
@@ -262,6 +378,11 @@ const rideController = {
                 WHERE r.Ride_ID_Pk = ?`,
                 [ride_id]
             );
+
+            await conn.commit();
+            transactionOpen = false;
+            try { await clearDriverPresence(getIO(), driver_id, user.userId); }
+            catch (err) { console.warn('Driver presence cleanup failed:', err.message); }
 
             try {
                 const io = getIO();
@@ -299,7 +420,17 @@ const rideController = {
             console.error("Accept Ride Error:", err);
             res.status(500).json({ success: false, message: "Error accepting ride", error: err.message });
         } finally {
-            if (conn) conn.release();
+            if (conn) {
+                try {
+                    if (transactionOpen) await conn.rollback();
+                } catch (rollbackErr) {
+                    console.error("Ride transaction rollback failed:", rollbackErr.message);
+                    conn.destroy();
+                    conn = null;
+                } finally {
+                    if (conn) conn.release();
+                }
+            }
         }
     },
 
@@ -312,30 +443,52 @@ const rideController = {
         }
 
         let conn;
+        let transactionOpen = false;
         try {
             conn = await pool.getConnection();
 
-            const [rides] = await conn.query("SELECT * FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
+            await conn.beginTransaction();
+            transactionOpen = true;
+            const [rides] = await conn.query("SELECT *, User_ID_FK AS User_ID_Fk FROM ride_history WHERE Ride_ID_Pk = ? FOR UPDATE", [ride_id]);
             if (rides.length === 0) {
                 return res.status(404).json({ success: false, message: "Ride not found" });
             }
 
             const ride = rides[0];
-            if (ride.Ride_Status === 'Completed' || ride.Ride_Status === 'Cancelled') {
-                return res.status(400).json({ success: false, message: `Ride is already ${ride.Ride_Status}` });
+            const isRiderOfRide = String(ride.User_ID_Fk) === String(user.userId);
+            let isDriverOfRide = false;
+            // Searching rides have no assigned driver. The booking owner can
+            // cancel regardless of whether their account also has a driver role.
+            if (!isRiderOfRide && ride.Driver_ID_Fk != null) {
+                const [driverRows] = await conn.query(
+                    "SELECT id FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                    [user.userId || 0, user.phone]
+                );
+                isDriverOfRide = driverRows.some(driver => String(driver.id) === String(ride.Driver_ID_Fk));
             }
-
-            const [driverRows] = await conn.query(
-                "SELECT id FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
-                [user.userId || 0, user.phone]
-            );
-            const isDriverOfRide = (driverRows.length > 0 && ride.Driver_ID_Fk === driverRows[0].id);
+            if (!isDriverOfRide && !isRiderOfRide) {
+                return res.status(403).json({ success: false, message: "Only the rider or assigned driver can cancel this ride." });
+            }
+            if (ride.Ride_Status === 'Cancelled') {
+                // Safe for retries and for cancellation racing search expiry.
+                return res.json({ success: true, already_cancelled: true, message: "Ride is already cancelled" });
+            }
+            if (ride.Ride_Status === 'Completed') {
+                return res.status(400).json({ success: false, message: "Completed rides cannot be cancelled" });
+            }
             const cancelled_by = isDriverOfRide ? 'Driver' : 'User';
 
             await conn.query(
                 "UPDATE ride_history SET Ride_Status = 'Cancelled', Cancelled_By = ?, Cancellation_Reason = ? WHERE Ride_ID_Pk = ?",
                 [cancelled_by, reason, ride_id]
             );
+
+            await deleteRideChat(conn, ride_id);
+            await conn.commit();
+            transactionOpen = false;
+
+            try { closeChatRoom(getIO(), ride_id); }
+            catch (err) { console.warn('Chat close event failed:', err.code || 'ERROR'); }
 
             // Emit cancellation notification + push
             try {
@@ -367,7 +520,7 @@ const rideController = {
                         } catch (e) { console.warn('Push notify error:', e?.message); }
                     } else {
                         // Rider abandoned before acceptance → notify drivers in vehicle room; push to customer only
-                        io.to(`vehicle:${ride.Vehicle_Type}`).emit("ride_unavailable", { ride_id });
+                        io.to(`vehicle:${String(ride.Vehicle_Type).toLowerCase()}`).emit("ride_unavailable", { ride_id });
                         try { await notifyCustomer(ride.User_ID_Fk, 'Ride cancelled', 'Your ride was cancelled.', pushData); } catch (e) { console.warn('Push notify error:', e?.message); }
                     }
                 }
@@ -380,168 +533,51 @@ const rideController = {
             console.error("Cancel Ride Error:", err);
             res.status(500).json({ success: false, message: "Error cancelling ride", error: err.message });
         } finally {
-            if (conn) conn.release();
+            if (conn) {
+                try {
+                    if (transactionOpen) await conn.rollback();
+                } catch (rollbackErr) {
+                    console.error("Ride transaction rollback failed:", rollbackErr.message);
+                    conn.destroy();
+                    conn = null;
+                } finally {
+                    if (conn) conn.release();
+                }
+            }
         }
     },
 
     completeRide: async (req, res) => {
         const { ride_id } = req.body;
-
-        if (!ride_id) {
-            return res.status(400).json({ success: false, message: "Ride ID is required" });
-        }
-
+        if (!ride_id) return res.status(400).json({ success: false, message: "Ride ID is required" });
         let conn;
+        let transactionOpen = false;
         try {
             conn = await pool.getConnection();
-
-            const [rides] = await conn.query("SELECT * FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
-            if (rides.length === 0) {
-                return res.status(404).json({ success: false, message: "Ride not found" });
-            }
-
-            if (rides[0].Ride_Status !== 'Started') {
-                return res.status(400).json({ success: false, message: "Only started rides can be completed" });
-            }
-
-            await conn.query(
-                "UPDATE ride_history SET Ride_Status = 'Completed', End_Time = NOW() WHERE Ride_ID_Pk = ?",
-                [ride_id]
-            );
-
-            // Handle Wallet Payment Deduction & Driver Wallet Credit
+            await conn.beginTransaction();
+            transactionOpen = true;
+            const [rides] = await conn.query("SELECT *, User_ID_FK AS User_ID_Fk FROM ride_history WHERE Ride_ID_Pk = ? FOR UPDATE", [ride_id]);
+            if (!rides.length) return res.status(404).json({ success: false, message: "Ride not found" });
             const ride = rides[0];
-            const totalFare = parseFloat(ride.Fare || 0);
-            const orgFee = parseFloat(ride.Organization_Fee || 0);
-            const driverEarning = Math.max(0, totalFare - orgFee);
-            const isWalletPayment = (ride.Payment_Method || '').toLowerCase() === 'wallet';
-            let walletPaid = false;
-
-            if (isWalletPayment && ride.User_ID_Fk && totalFare > 0) {
-                try {
-                    const [walletRows] = await conn.query(
-                        "SELECT balance FROM user_wallets WHERE user_id = ? FOR UPDATE",
-                        [ride.User_ID_Fk]
-                    );
-                    const userBalance = parseFloat(walletRows[0]?.balance || 0);
-
-                    if (userBalance >= totalFare) {
-                        // 1. Deduct from rider's wallet
-                        await conn.query(
-                            "UPDATE user_wallets SET balance = balance - ? WHERE user_id = ?",
-                            [totalFare, ride.User_ID_Fk]
-                        );
-
-                        // 2. Insert debit transaction record
-                        await conn.query(
-                            `INSERT INTO user_wallet_transactions (
-                                user_id, amount, transaction_type, payment_method, description, reference_id, ride_id, status, created_at
-                            ) VALUES (?, ?, 'debit', 'ride_fare', ?, ?, ?, 'completed', NOW())`,
-                            [
-                                ride.User_ID_Fk,
-                                totalFare,
-                                `Payment for Ride #${ride_id}`,
-                                `RIDE_PAY_${ride_id}`,
-                                ride_id
-                            ]
-                        );
-
-                        // 3. Credit driver's wallet
-                        if (ride.Driver_ID_Fk) {
-                            await conn.query(
-                                `INSERT INTO driver_wallet (
-                                    driver_id, transaction_type, amount, description, reference_id, payment_method, status, created_at
-                                ) VALUES (?, 'credit', ?, ?, ?, 'wallet', 'completed', NOW())`,
-                                [
-                                    ride.Driver_ID_Fk,
-                                    driverEarning,
-                                    `Fare credit for Ride #${ride_id}`,
-                                    `RIDE_CREDIT_${ride_id}`
-                                ]
-                            ).catch(e => console.warn('Driver wallet insert warning:', e.message));
-                        }
-
-                        // 4. Mark ride as Paid in ride_history
-                        await conn.query(
-                            "UPDATE ride_history SET Payment_Status = 'Paid', Payment_Method = 'Wallet' WHERE Ride_ID_Pk = ?",
-                            [ride_id]
-                        ).catch(() => {});
-
-                        walletPaid = true;
-                        console.log(`💳 [Wallet] Ride #${ride_id} successfully paid via Rider #${ride.User_ID_Fk} wallet (PKR ${totalFare}).`);
-                    } else {
-                        // Insufficient wallet balance -> fallback to cash collection
-                        console.warn(`⚠️ [Wallet] Rider #${ride.User_ID_Fk} has insufficient balance (PKR ${userBalance} < PKR ${totalFare}). Fallback to Cash.`);
-                        await conn.query(
-                            "UPDATE ride_history SET Payment_Method = 'Cash', Payment_Status = 'Unpaid' WHERE Ride_ID_Pk = ?",
-                            [ride_id]
-                        ).catch(() => {});
-                    }
-                } catch (walletErr) {
-                    console.error("❌ Wallet deduction error:", walletErr.message);
-                }
+            const [assigned] = await conn.query(
+                "SELECT id FROM drivers WHERE id = ? AND (User_ID_FK = ? OR (? <> '' AND REPLACE(phone, '-', '') = REPLACE(?, '-', ''))) FOR UPDATE",
+                [ride.Driver_ID_Fk, req.user.userId, req.user.phone || '', req.user.phone || '']
+            );
+            if (!assigned.length) return res.status(403).json({ success: false, message: "Only the assigned driver can complete this ride." });
+            const alreadyCompleted = ride.Ride_Status === 'Completed';
+            if (!alreadyCompleted && ride.Ride_Status !== 'Started') return res.status(400).json({ success: false, message: "Only started rides can be completed" });
+            let wallet;
+            if (alreadyCompleted) {
+                // A network retry returns the recorded outcome without charging,
+                // crediting earnings or incrementing counters a second time.
+                wallet = await completionWalletSummary(conn, ride);
+            } else {
+                wallet = await settleRideCompletion(conn, ride);
+                await conn.query("UPDATE ride_history SET Ride_Status = 'Completed', End_Time = NOW() WHERE Ride_ID_Pk = ?", [ride_id]);
+                await deleteRideChat(conn, ride_id);
             }
-
-            // Insert driver earning (one row per completed ride)
-            try {
-                await conn.query(
-                    `INSERT INTO driver_earnings (Ride_ID_Fk, Driver_ID_Fk, Total_Fare, Organization_Fee, Driver_Earning, Payment_Method, Vehicle_Type, Earned_At)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
-                    [ride_id, ride.Driver_ID_Fk, totalFare, orgFee, driverEarning, walletPaid ? 'Wallet' : (ride.Payment_Method || 'Cash'), ride.Vehicle_Type || null]
-                );
-            } catch (earnErr) {
-                console.error("Driver earning insert (non-blocking):", earnErr.message);
-            }
-
-            // Update driver period totals (incremental). Limits from vehicle_fare_rate via JOIN when needed.
-            try {
-                const ride = rides[0];
-                const driverId = ride.Driver_ID_Fk;
-                const vehicleType = ride.Vehicle_Type || null;
-
-                // Increment the \"unpaid\" counters on drivers.
-                // These represent rides/earnings since last dues clear, NOT all-time totals.
-                const totalFare = parseFloat(ride.Fare || 0);
-                const orgFee = parseFloat(ride.Organization_Fee || 0);
-                const driverEarning = Math.max(0, totalFare - orgFee);
-
-                await conn.query(
-                    "UPDATE drivers SET completed_rides_count = completed_rides_count + 1, driver_earnings_sum = driver_earnings_sum + ? WHERE id = ?",
-                    [driverEarning, driverId]
-                );
-
-                // Read back current period totals to compare against limits
-                const [driverTotals] = await conn.query(
-                    "SELECT completed_rides_count FROM drivers WHERE id = ?",
-                    [driverId]
-                );
-                const totalRides = parseInt(driverTotals[0]?.completed_rides_count || 0, 10);
-
-                let ridesLimit = 0;
-                let vehicleRidesOverLimitCount = 0;
-                if (vehicleType) {
-                    const [rateRows] = await conn.query(
-                        "SELECT rides_limit, rides_over_limit_count FROM vehicle_fare_rate WHERE Vehicle_Type = ? AND Is_Active = 1 LIMIT 1",
-                        [vehicleType]
-                    );
-                    ridesLimit = parseInt(rateRows[0]?.rides_limit ?? 0, 10);
-                    vehicleRidesOverLimitCount = parseInt(rateRows[0]?.rides_over_limit_count ?? 0, 10);
-                }
-                const ridesBeyondMax = ridesLimit > 0 ? Math.max(0, totalRides - ridesLimit) : 0;
-                const meetsLimit = (ridesLimit > 0 && totalRides >= ridesLimit) ||
-                    (vehicleRidesOverLimitCount > 0 && ridesBeyondMax >= vehicleRidesOverLimitCount);
-                if (meetsLimit) {
-                    await conn.query(
-                        "UPDATE drivers SET overdue_since = COALESCE(overdue_since, NOW()) WHERE id = ? AND overdue_since IS NULL",
-                        [driverId]
-                    );
-                }
-            } catch (driverUpdateErr) {
-                console.error("Driver totals/limit update (non-blocking):", driverUpdateErr.message);
-            }
-
             const [completedRide] = await conn.query(
-                `SELECT r.*, d.full_name as driver_name, d.phone as driver_phone,
+                `SELECT r.*, r.User_ID_FK AS User_ID_Fk, d.full_name as driver_name, d.phone as driver_phone,
                 d.vehicle_type as driver_vehicle_type, d.vehicle_model, d.vehicle_number,
                 d.vehicle_color, d.photo_path as driver_photo, d.Rating as driver_rating,
                 u.User_Name as rider_name
@@ -552,27 +588,32 @@ const rideController = {
                 [ride_id]
             );
 
-            try {
-                const io = getIO();
-                io.to(`user:${completedRide[0].User_ID_Fk}`).emit("ride_completed", {
-                    ride_id,
-                    ride: completedRide[0]
-                });
-                io.to(`ride:${ride_id}`).emit("ride_completed", {
-                    ride_id,
-                    ride: completedRide[0]
-                });
-                try { await notifyCustomer(completedRide[0].User_ID_Fk, 'Ride completed', 'Thank you for riding with us.', { ride_id: String(ride_id), event: 'ride_completed' }); } catch (e) { console.warn('Push notify error:', e?.message); }
-            } catch (socketErr) {
-                console.error("Socket emit error (non-blocking):", socketErr.message);
+            await conn.commit();
+            transactionOpen = false;
+            if (!alreadyCompleted) {
+                try { closeChatRoom(getIO(), ride_id); }
+                catch (err) { console.warn('Chat close event failed:', err.code || 'ERROR'); }
+                try {
+                    const io = getIO();
+                    const payload = { ride_id, ride: completedRide[0] };
+                    io.to(`user:${ride.User_ID_Fk}`).emit('ride_completed', payload);
+                    io.to(`ride:${ride_id}`).emit('ride_completed', payload);
+                    io.to(`user:${req.user.userId}`).emit('driver:wallet_updated', wallet);
+                } catch (err) { console.warn('Completion event failed:', err.message); }
+                void notifyCustomer(ride.User_ID_Fk, 'Ride completed', 'Thank you for riding with us.', { ride_id: String(ride_id), event: 'ride_completed' })
+                    .catch(() => console.warn('Completion push failed'));
             }
-
-            res.json({ success: true, message: "Ride completed successfully", ride: completedRide[0] });
+            return res.json({ success: true, message: 'Ride completed successfully', already_completed: alreadyCompleted, ride: completedRide[0], ...wallet });
         } catch (err) {
-            console.error("Complete Ride Error:", err);
-            res.status(500).json({ success: false, message: "Error completing ride", error: err.message });
+            console.error('Complete Ride Error:', err);
+            return res.status(500).json({ success: false, message: 'Unable to complete ride. Please retry.' });
         } finally {
-            if (conn) conn.release();
+            if (conn) {
+                let usable = true;
+                try { if (transactionOpen) await conn.rollback(); }
+                catch { usable = false; conn.destroy(); }
+                finally { if (usable) conn.release(); }
+            }
         }
     },
 
@@ -588,7 +629,7 @@ const rideController = {
         try {
             conn = await pool.getConnection();
 
-            const [rides] = await conn.query("SELECT Ride_Status, Driver_ID_Fk, User_ID_Fk FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
+            const [rides] = await conn.query("SELECT Ride_Status, Driver_ID_Fk, User_ID_FK AS User_ID_Fk FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
             if (rides.length === 0) {
                 return res.status(404).json({ success: false, message: "Ride not found" });
             }
@@ -639,7 +680,7 @@ const rideController = {
         try {
             conn = await pool.getConnection();
 
-            const [rides] = await conn.query("SELECT Ride_Status, Driver_ID_Fk, User_ID_Fk FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
+            const [rides] = await conn.query("SELECT Ride_Status, Driver_ID_Fk, User_ID_FK AS User_ID_Fk FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
             if (rides.length === 0) {
                 return res.status(404).json({ success: false, message: "Ride not found" });
             }
@@ -701,7 +742,7 @@ const rideController = {
             try {
                 conn = await pool.getConnection();
 
-                const [rides] = await conn.query("SELECT * FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
+                const [rides] = await conn.query("SELECT *, User_ID_FK AS User_ID_Fk FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
                 if (rides.length === 0) {
                     conn.release();
                     console.log("❌ Update Fare: Ride not found ID:", ride_id);
@@ -760,11 +801,8 @@ const rideController = {
                 // Notify drivers about fare update
                 try {
                     const io = getIO();
-                    const [updatedRide] = await conn.query("SELECT * FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
-                    const vehicleRoom = `vehicle:${String(ride.Vehicle_Type).toLowerCase()}`;
-
-                    console.log(`📡 Emitting fare_updated to ${vehicleRoom}`);
-                    io.to(vehicleRoom).emit("fare_updated", {
+                    const [updatedRide] = await conn.query("SELECT *, User_ID_FK AS User_ID_Fk, TIMESTAMPDIFF(SECOND, CreatedAt, NOW()) AS Search_Age_Seconds FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
+                    await dispatchRide(io, conn, updatedRide[0], "fare_updated", {
                         ride_id: Number(ride_id),
                         new_fare: Number(fare),
                         ride: { ...updatedRide[0], Fare: Number(fare) }
@@ -836,7 +874,7 @@ const rideController = {
                 const offsetVal = Math.max(0, parseInt(offset, 10) || 0);
 
                 const [ridesRows] = await conn.query(
-                    `SELECT r.*, u.User_Name as rider_name, u.Mobile as rider_phone
+                    `SELECT r.*, r.User_ID_FK AS User_ID_Fk, u.User_Name as rider_name, u.Mobile as rider_phone
                      FROM ride_history r
                      LEFT JOIN users u ON r.User_ID_Fk = u.User_ID_Pk
                      WHERE r.Driver_ID_Fk = ? ${statusClause}
@@ -846,7 +884,7 @@ const rideController = {
                 );
                 rides = ridesRows;
             } else {
-                let query = "SELECT * FROM ride_history WHERE User_ID_Fk = ? ";
+                let query = "SELECT *, User_ID_FK AS User_ID_Fk FROM ride_history WHERE User_ID_Fk = ? ";
                 const queryParams = [user.userId];
 
                 if (status) {
@@ -885,77 +923,61 @@ const rideController = {
     submitReview: async (req, res) => {
         const { ride_id, rating, feedback_tags, comment } = req.body;
         const user = req.user;
-
-        if (!ride_id || !rating) {
-            return res.status(400).json({ success: false, message: "Ride ID and rating are required" });
+        if (!/^[1-9]\d*$/.test(String(ride_id)) || !Number.isSafeInteger(Number(ride_id)) ||
+            !Number.isInteger(rating) || rating < 1 || rating > 5 ||
+            (comment != null && (typeof comment !== 'string' || comment.length > 500)) ||
+            (feedback_tags != null && (!Array.isArray(feedback_tags) || feedback_tags.length > 10 ||
+                feedback_tags.some(tag => typeof tag !== 'string' || tag.length > 100)))) {
+            return res.status(400).json({ success: false, message: "A valid ride ID, integer rating (1–5), and valid feedback are required." });
         }
-
-        if (rating < 1 || rating > 5) {
-            return res.status(400).json({ success: false, message: "Rating must be between 1 and 5" });
-        }
-
         let conn;
+        let transactionOpen = false;
         try {
             conn = await pool.getConnection();
-
-            const [rides] = await conn.query("SELECT * FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
-            if (rides.length === 0) {
-                return res.status(404).json({ success: false, message: "Ride not found" });
-            }
-
+            await conn.beginTransaction();
+            transactionOpen = true;
+            const [rides] = await conn.query("SELECT *, User_ID_FK AS User_ID_Fk FROM ride_history WHERE Ride_ID_Pk = ? FOR UPDATE", [ride_id]);
+            if (!rides.length) return res.status(404).json({ success: false, message: "Ride not found" });
             const ride = rides[0];
-            if (ride.Ride_Status !== 'Completed') {
-                return res.status(400).json({ success: false, message: "Can only review completed rides" });
-            }
-
-            // Create ride_reviews table if not exists
-            await conn.query(`
-                CREATE TABLE IF NOT EXISTS ride_reviews (
-                    Review_ID_Pk INT AUTO_INCREMENT PRIMARY KEY,
-                    Ride_ID_Fk INT NOT NULL,
-                    Reviewer_ID_Fk INT NOT NULL,
-                    Reviewee_ID_Fk INT DEFAULT NULL,
-                    Reviewer_Role ENUM('User','Driver') NOT NULL,
-                    Rating TINYINT NOT NULL,
-                    Feedback_Tags TEXT DEFAULT NULL,
-                    Comment TEXT DEFAULT NULL,
-                    CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE KEY unique_review (Ride_ID_Fk, Reviewer_ID_Fk)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            `);
-
-            const isRiderOfRide = Number(user.userId) === Number(ride.User_ID_Fk);
-            const reviewerRole = isRiderOfRide ? 'User' : 'Driver';
-            const revieweeId = isRiderOfRide ? ride.Driver_ID_Fk : ride.User_ID_Fk;
-            const tagsStr = Array.isArray(feedback_tags) ? feedback_tags.join(',') : (feedback_tags || null);
-
+            const isRider = String(user.userId) === String(ride.User_ID_Fk);
+            const [drivers] = await conn.query("SELECT id, User_ID_FK, phone FROM drivers WHERE id = ? FOR UPDATE", [ride.Driver_ID_Fk]);
+            const driver = drivers[0];
+            const normalizePhone = value => String(value || '').replace(/-/g, '');
+            const isDriver = driver && (String(driver.User_ID_FK) === String(user.userId) ||
+                (normalizePhone(user.phone) && normalizePhone(driver.phone) === normalizePhone(user.phone)));
+            if (!isRider && !isDriver) return res.status(403).json({ success: false, message: "You can only review your own ride." });
+            if (ride.Ride_Status !== 'Completed') return res.status(400).json({ success: false, message: "Can only review completed rides" });
+            if (!driver) return res.status(409).json({ success: false, message: "The assigned driver is unavailable for review." });
+            const reviewerRole = isRider ? 'User' : 'Driver';
+            const revieweeId = isRider ? ride.Driver_ID_Fk : ride.User_ID_Fk;
+            const tags = feedback_tags?.join(',') || null;
+            const text = comment?.trim() || null;
+            // Use the shared schema columns. Some deployed tables have an optional
+            // User_ID_FK audit column, but fresh installations do not.
             await conn.query(
-                `INSERT INTO ride_reviews (Ride_ID_Fk, Reviewer_ID_Fk, Reviewee_ID_Fk, Reviewer_Role, Rating, Feedback_Tags, Comment, User_ID_FK)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                 ON DUPLICATE KEY UPDATE Rating = ?, Feedback_Tags = ?, Comment = ?, User_ID_FK = ?`,
-                [ride_id, user.userId, revieweeId, reviewerRole, rating, tagsStr, comment || null, user.userId,
-                    rating, tagsStr, comment || null, user.userId]
+                `INSERT INTO ride_reviews (Ride_ID_Fk, Reviewer_ID_Fk, Reviewee_ID_Fk, Reviewer_Role, Rating, Feedback_Tags, Comment)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE Rating = ?, Feedback_Tags = ?, Comment = ?`,
+                [ride_id, user.userId, revieweeId, reviewerRole, rating, tags, text, rating, tags, text]
             );
-
-            // Update driver's average rating if reviewed by a user
-            if (reviewerRole === 'User' && ride.Driver_ID_Fk) {
-                const [avgResult] = await conn.query(
-                    `SELECT AVG(Rating) as avg_rating FROM ride_reviews 
-                     WHERE Reviewee_ID_Fk = ? AND Reviewer_Role = 'User'`,
-                    [ride.Driver_ID_Fk]
-                );
-                if (avgResult[0]?.avg_rating) {
-                    await conn.query("UPDATE drivers SET Rating = ? WHERE id = ?",
-                        [Math.round(avgResult[0].avg_rating), ride.Driver_ID_Fk]);
-                }
+            if (isRider) {
+                const [averages] = await conn.query("SELECT AVG(Rating) as avg_rating FROM ride_reviews WHERE Reviewee_ID_Fk = ? AND Reviewer_Role = 'User'", [ride.Driver_ID_Fk]);
+                // The existing drivers.Rating column stores whole stars.
+                await conn.query("UPDATE drivers SET Rating = ? WHERE id = ?", [Math.round(Number(averages[0].avg_rating)), ride.Driver_ID_Fk]);
             }
-
+            await conn.commit();
+            transactionOpen = false;
             res.json({ success: true, message: "Review submitted successfully" });
         } catch (err) {
             console.error("Submit Review Error:", err);
-            res.status(500).json({ success: false, message: "Error submitting review", error: err.message });
+            res.status(500).json({ success: false, message: "Unable to save your review. Please try again." });
         } finally {
-            if (conn) conn.release();
+            if (conn) {
+                if (transactionOpen) {
+                    try { await conn.rollback(); } catch { conn.destroy(); conn = null; }
+                }
+                if (conn) conn.release();
+            }
         }
     },
 
@@ -976,22 +998,6 @@ const rideController = {
             }
 
             const driver = driverRows[0];
-
-            // Ensure ride_reviews table exists before querying
-            await conn.query(`
-                CREATE TABLE IF NOT EXISTS ride_reviews (
-                    Review_ID_Pk INT AUTO_INCREMENT PRIMARY KEY,
-                    Ride_ID_Fk INT NOT NULL,
-                    Reviewer_ID_Fk INT NOT NULL,
-                    Reviewee_ID_Fk INT DEFAULT NULL,
-                    Reviewer_Role ENUM('User','Driver') NOT NULL,
-                    Rating TINYINT NOT NULL,
-                    Feedback_Tags TEXT DEFAULT NULL,
-                    Comment TEXT DEFAULT NULL,
-                    CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE KEY unique_review (Ride_ID_Fk, Reviewer_ID_Fk)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            `);
 
             const [reviewStats] = await conn.query(
                 `SELECT COUNT(*) as total_reviews, AVG(Rating) as avg_rating 
@@ -1242,7 +1248,7 @@ const rideController = {
                 if (driverRows.length > 0) {
                     const driverId = driverRows[0].id;
                     const [rides] = await conn.query(
-                        `SELECT r.*, u.User_Name as rider_name, u.Mobile as rider_phone
+                        `SELECT r.*, r.User_ID_FK AS User_ID_Fk, u.User_Name as rider_name, u.Mobile as rider_phone
                          FROM ride_history r
                          LEFT JOIN users u ON r.User_ID_Fk = u.User_ID_Pk
                          WHERE r.Driver_ID_Fk = ? AND r.Ride_Status IN ('Accepted', 'Arrived', 'Started')
@@ -1255,7 +1261,7 @@ const rideController = {
                 if (!ride) {
                     // Rider: check for active ride or recently completed/cancelled ride
                     const [rides] = await conn.query(
-                        `SELECT r.*, d.full_name as driver_name, d.phone as driver_phone,
+                        `SELECT r.*, r.User_ID_FK AS User_ID_Fk, d.full_name as driver_name, d.phone as driver_phone,
                          d.vehicle_type as driver_vehicle_type, d.vehicle_model, d.vehicle_number,
                          d.vehicle_color, d.photo_path as driver_photo, d.Rating as driver_rating
                          FROM ride_history r
@@ -1263,7 +1269,7 @@ const rideController = {
                          WHERE r.User_ID_Fk = ? AND (
                              r.Ride_Status IN ('Requested', 'Accepted', 'Arrived', 'Started')
                              OR (r.Ride_Status = 'Completed' AND r.End_Time >= NOW() - INTERVAL 5 MINUTE)
-                             OR (r.Ride_Status = 'Cancelled' AND r.CreatedAt >= NOW() - INTERVAL 2 MINUTE)
+                             OR (r.Ride_Status = 'Cancelled' AND r.UpdatedAt >= NOW() - INTERVAL 5 MINUTE)
                          )
                          ORDER BY FIELD(r.Ride_Status, 'Started', 'Arrived', 'Accepted', 'Requested', 'Completed', 'Cancelled'), r.CreatedAt DESC LIMIT 1`,
                         [user.userId]
@@ -1315,7 +1321,7 @@ const rideController = {
             conn = await pool.getConnection();
 
             const [rows] = await conn.query(
-                "SELECT Ride_ID_Pk, User_ID_Fk, share_token FROM ride_history WHERE Ride_ID_Pk = ?",
+                "SELECT Ride_ID_Pk, User_ID_FK AS User_ID_Fk, share_token FROM ride_history WHERE Ride_ID_Pk = ?",
                 [ride_id]
             );
             if (rows.length === 0) {

@@ -7,8 +7,8 @@
   "type": "commonjs",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "nodemon server.js"
+    "test": "node --test tests/*.test.js",
+    "start": "nodemon Server.js"
   },
   "keywords": [],
   "dependencies": {
@@ -24,6 +24,10 @@
     "mysql2": "^3.16.3",
     "nodemailer": "^8.0.1",
     "nodemon": "^3.1.11",
+    "redis": "^6.3.1",
     "socket.io": "^4.8.3"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

@@ -99,6 +99,7 @@ async function sendPushToDevice(token, title, body, data = {}) {
                 priority: 'high',
                 notification: {
                     channelId: ANDROID_CHANNEL_ID,
+                    ...(data.event === 'ride_chat_message' ? { tag: `ride-chat-${data.ride_id}` } : {}),
                 },
             },
             apns: {

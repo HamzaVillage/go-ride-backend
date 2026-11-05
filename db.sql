@@ -162,7 +162,7 @@ CREATE TABLE `drivers` (
   `overdue_since` datetime DEFAULT NULL COMMENT 'When driver first met limit; NULL = not overdue',
   `fcm_token` varchar(512) DEFAULT NULL COMMENT 'Firebase Cloud Messaging token for push notifications',
   `fcm_token_updated_at` timestamp NULL DEFAULT NULL ON UPDATE current_timestamp()
-) ENGINE=MyISAM DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
 
 -- --------------------------------------------------------
 
@@ -499,6 +499,8 @@ CREATE TABLE `support_tickets` (
 --
 
 CREATE TABLE `sysconfigsetup` (
+  `dispatch_min_radius_km` decimal(6,2) NOT NULL DEFAULT 1.00 COMMENT 'Initial pickup search radius in kilometers',
+  `dispatch_radius_km` decimal(6,2) NOT NULL DEFAULT 5.00 COMMENT 'Pickup search radius in kilometers',
   `ride_service` tinyint(1) NOT NULL DEFAULT 0,
   `courier_service` tinyint(1) NOT NULL DEFAULT 0,
   `food_delivery_service` tinyint(1) NOT NULL DEFAULT 0,
@@ -1095,3 +1097,32 @@ ALTER TABLE `notification_logs`
 ALTER TABLE `notification_templates`
   ADD CONSTRAINT `notification_templates_ibfk_1` FOREIGN KEY (`Created_By`) REFERENCES `users` (`User_ID_Pk`) ON DELETE SET NULL;
 COMMIT;
+
+-- Temporary active-ride chat and retained reported conversations
+-- Run before deploying chat. Existing ride/user tables are not modified.
+CREATE TABLE IF NOT EXISTS ride_chat_messages (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    ride_id INT NOT NULL,
+    sender_user_id INT NOT NULL,
+    sender_role ENUM('customer','driver') NOT NULL,
+    client_message_id VARCHAR(64) NOT NULL,
+    message_text VARCHAR(1000) NOT NULL,
+    created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    UNIQUE KEY uniq_chat_client_message (ride_id, sender_user_id, client_message_id),
+    KEY idx_chat_ride (ride_id, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS reported_Chat (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    ride_id INT NOT NULL,
+    reporter_user_id INT NOT NULL,
+    reporter_role ENUM('customer','driver') NOT NULL,
+    reason VARCHAR(1000) NOT NULL,
+    transcript JSON NOT NULL,
+    review_status ENUM('pending','reviewed','resolved') NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    UNIQUE KEY uniq_chat_reporter (ride_id, reporter_user_id),
+    KEY idx_reported_chat_status (review_status, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

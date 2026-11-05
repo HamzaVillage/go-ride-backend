@@ -1,12 +1,22 @@
 const express = require('express');
 const router = express.Router();
+const adminAuthMiddleware = require('../utils/chatAdminAuthMiddleware');
+const chat = require('../controller/rideChatController');
 const rideController = require('../controller/rideController');
 const authMiddleware = require('../utils/authMiddleware');
 
+router.get('/chat/reports', adminAuthMiddleware, chat.noStore, chat.reports);
+router.get('/chat/reports/:reportId', adminAuthMiddleware, chat.noStore, chat.reportDetail);
+router.get('/:rideId/chat', authMiddleware, chat.noStore, chat.enabled, chat.history);
+router.post('/:rideId/chat/messages', authMiddleware, chat.noStore, chat.enabled, chat.send);
+router.post('/:rideId/chat/report', authMiddleware, chat.noStore, chat.enabled, chat.report);
+
 // Post a new ride (User)
 router.post('/create', authMiddleware, rideController.createRide);
+router.get('/search/:rideId', authMiddleware, rideController.getSearchStatus);
 
 // Get nearby rides (Driver)
+router.get('/nearby-drivers', authMiddleware, rideController.getNearbyDrivers);
 router.get('/nearby', authMiddleware, rideController.getNearbyRides);
 
 // Cancel a ride (User/Driver)

@@ -33,17 +33,7 @@ const walletController = {
                          FROM driver_wallet WHERE driver_id = ?`,
                         [driverId]
                     );
-                    let dBalance = parseFloat(dwStats[0]?.balance || 0);
-
-                    if (dBalance === 0 && dRows[0].User_ID_FK) {
-                        const [uwRows] = await conn.query(
-                            "SELECT balance FROM user_wallets WHERE user_id = ?",
-                            [dRows[0].User_ID_FK]
-                        );
-                        if (uwRows.length > 0 && parseFloat(uwRows[0].balance || 0) > 0) {
-                            dBalance = parseFloat(uwRows[0].balance);
-                        }
-                    }
+                    const dBalance = parseFloat(dwStats[0]?.balance || 0);
 
                     return res.json({
                         success: true,

@@ -3,6 +3,14 @@ const jwt = require("jsonwebtoken");
 const pool = require("../db/Connect_Db");
 const { getDriverWalletBalance, getVehicleMinWalletLimit } = require("../utils/driverHelper");
 
+const { category, validCoordinates, presenceTtlMs } = require('../services/driverDispatch');
+
+const { cache } = require('../services/redisCache');
+const presenceTtlSeconds = Math.ceil(presenceTtlMs / 1000);
+
+const { createRideChatService } = require('../services/rideChatService');
+const rideChat = createRideChatService(pool);
+
 let io;
 
 /**
@@ -80,67 +88,113 @@ function initSocket(server) {
             return;
         }
 
-        // ── Auto-rejoin active ride room on reconnect ──
-        try {
-            const conn = await pool.getConnection();
+        // Separate authorized chat rooms: arbitrary ride:join cannot expose chat.
+        socket.on('ride_chat:subscribe', async (data, reply) => {
+            const ack = typeof reply === 'function' ? reply : () => {};
+            if (socket.chatSubscribing) return ack({ success: false, code: 'CHAT_BUSY', message: 'Chat is connecting.' });
+            socket.chatSubscribing = true;
             try {
-                const [driverRows] = await conn.query(
-                    "SELECT id FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
-                    [userId || 0, phone]
-                );
-                let activeRideId = null;
+                const history = await rideChat.history(data?.ride_id, socket.user);
+                if (!socket.connected) return;
+                await socket.join(`chat:${history.ride_id}`);
+                try {
+                    const latest = await rideChat.history(data?.ride_id, socket.user);
+                    ack({ success: true, ...latest });
+                } catch (err) {
+                    await socket.leave(`chat:${history.ride_id}`);
+                    throw err;
+                }
+            } catch (err) {
+                ack({ success: false, code: err.code || 'CHAT_ERROR', message: err.status ? err.message : 'Unable to open chat.' });
+            } finally { socket.chatSubscribing = false; }
+        });
+        socket.on('ride_chat:unsubscribe', data => {
+            if (/^[1-9]\d*$/.test(String(data?.ride_id))) socket.leave(`chat:${data.ride_id}`);
+        });
 
-                if (driverRows.length > 0) {
-                    const [rides] = await conn.query(
-                        "SELECT Ride_ID_Pk FROM ride_history WHERE Driver_ID_Fk = ? AND Ride_Status IN ('Accepted', 'Arrived', 'Started') LIMIT 1",
-                        [driverRows[0].id]
+        // Register handlers synchronously; the client can emit immediately on connect.
+        const rejoinActiveRide = async () => {
+            try {
+                const conn = await pool.getConnection();
+                try {
+                    const [driverRows] = await conn.query(
+                        "SELECT id FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                        [userId || 0, phone]
                     );
-                    if (rides.length > 0) activeRideId = rides[0].Ride_ID_Pk;
-                }
+                    let activeRideId = null;
 
-                if (!activeRideId) {
-                    const [rides] = await conn.query(
-                        "SELECT Ride_ID_Pk FROM ride_history WHERE User_ID_Fk = ? AND Ride_Status IN ('Requested', 'Accepted', 'Arrived', 'Started') LIMIT 1",
-                        [userId]
-                    );
-                    if (rides.length > 0) activeRideId = rides[0].Ride_ID_Pk;
-                }
+                    if (driverRows.length > 0) {
+                        const [rides] = await conn.query(
+                            "SELECT Ride_ID_Pk FROM ride_history WHERE Driver_ID_Fk = ? AND Ride_Status IN ('Accepted', 'Arrived', 'Started') LIMIT 1",
+                            [driverRows[0].id]
+                        );
+                        if (rides.length > 0) activeRideId = rides[0].Ride_ID_Pk;
+                    }
 
-                if (activeRideId) {
-                    socket.join(`ride:${activeRideId}`);
-                    socket.activeRideId = activeRideId;
-                    console.log(`🔄 Auto-rejoined ride:${activeRideId} for ${role} userId:${userId}`);
+                    if (!activeRideId) {
+                        const [rides] = await conn.query(
+                            "SELECT Ride_ID_Pk FROM ride_history WHERE User_ID_Fk = ? AND Ride_Status IN ('Requested', 'Accepted', 'Arrived', 'Started') LIMIT 1",
+                            [userId]
+                        );
+                        if (rides.length > 0) activeRideId = rides[0].Ride_ID_Pk;
+                    }
+
+                    if (activeRideId && socket.connected) {
+                        socket.join(`ride:${activeRideId}`);
+                        socket.activeRideId = activeRideId;
+                        console.log(`🔄 Auto-rejoined ride:${activeRideId} for ${role} userId:${userId}`);
+                    }
+                } finally {
+                    conn.release();
                 }
-            } finally {
-                conn.release();
+            } catch (err) {
+                console.error("Auto-rejoin ride room error:", err.message);
             }
-        } catch (err) {
-            console.error("Auto-rejoin ride room error:", err.message);
-        }
+        };
 
         // ── Driver goes online ──
         socket.on("driver:online", async (data) => {
+            const requestVersion = (socket.onlineVersion || 0) + 1;
+            socket.onlineVersion = requestVersion;
+            const oldPresence = socket.data.driverPresence;
+            socket.data.driverPresence = null;
+            if (oldPresence) void cache.removePresence(socket.id, oldPresence.vehicle_type);
+            const acknowledge = payload => {
+                if (socket.connected && socket.onlineVersion === requestVersion) socket.emit("driver:online:ack", payload);
+            };
             try {
-                const { lat, lng, vehicle_type } = data || {};
+                const { lat, lng } = data || {};
+                if (!validCoordinates(lat, lng)) {
+                    acknowledge({ success: false, message: "A valid current GPS location is required." });
+                    return;
+                }
                 const conn = await pool.getConnection();
                 try {
                     const [rows] = await conn.query(
-                        "SELECT id, User_ID_FK, vehicle_type, overdue_since, completed_rides_count FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                        "SELECT id, User_ID_FK, vehicle_type, status, Is_Available, overdue_since, completed_rides_count FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
                         [userId || 0, phone]
                     );
                     if (rows.length === 0) {
-                        socket.emit("driver:online:ack", { success: false, message: "Driver profile not found" });
+                        acknowledge({ success: false, message: "Driver profile not found" });
                         return;
                     }
                     const driver = rows[0];
-                    const dbVehicleType = (vehicle_type || driver.vehicle_type || 'mini').toLowerCase();
+                    const dbVehicleType = category(driver.vehicle_type);
+                    const [activeRides] = await conn.query(
+                        "SELECT Ride_ID_Pk FROM ride_history WHERE Driver_ID_Fk = ? AND Ride_Status IN ('Accepted','Arrived','Started','Ongoing') LIMIT 1",
+                        [driver.id]
+                    );
+                    if (category(driver.status) !== 'active' || Number(driver.Is_Available) !== 1 || !dbVehicleType || activeRides.length) {
+                        acknowledge({ success: false, message: "Driver must be approved and available to find rides." });
+                        return;
+                    }
 
                     // Check dynamic minimum wallet limit from vehicle_fare_rate
                     const wallet_balance = await getDriverWalletBalance(conn, driver.id, driver.User_ID_FK);
                     const min_wallet_balance = await getVehicleMinWalletLimit(conn, driver.vehicle_type || dbVehicleType);
 
                     if (wallet_balance < min_wallet_balance) {
-                        socket.emit("driver:online:ack", {
+                        acknowledge({
                             success: false,
                             topup_required: true,
                             wallet_balance,
@@ -175,7 +229,7 @@ function initSocket(server) {
                         );
                         const hoursOverdue = parseInt(overdueCheck[0]?.hours_overdue ?? 0, 10);
                         if (hoursOverdue >= 8) {
-                            socket.emit("driver:online:ack", {
+                            acknowledge({
                                 success: false,
                                 message: "Your account is blocked. Please clear your dues to continue finding rides.",
                                 blocked: true
@@ -184,21 +238,40 @@ function initSocket(server) {
                         }
                     }
 
-                    socket.join(`vehicle:${dbVehicleType}`);
-                    socket.driverInfo = { lat, lng, vehicle_type: dbVehicleType };
+                    if (!socket.connected || socket.onlineVersion !== requestVersion) return;
+                    if (socket.driverInfo?.vehicle_type) await socket.leave(`vehicle:${socket.driverInfo.vehicle_type}`);
+                    await socket.join(`vehicle:${dbVehicleType}`);
+                    if (!socket.connected || socket.onlineVersion !== requestVersion) {
+                        await socket.leave(`vehicle:${dbVehicleType}`);
+                        return;
+                    }
+                    socket.driverInfo = { lat: Number(lat), lng: Number(lng), vehicle_type: dbVehicleType };
+                    socket.data.driverPresence = { driverId: driver.id, userId, vehicle_type: dbVehicleType, lat: Number(lat), lng: Number(lng), heading: Number.isFinite(Number(data?.heading)) ? Number(data.heading) : 0, updatedAt: Date.now() };
+                    void cache.putPresence(socket.id, socket.data.driverPresence, presenceTtlSeconds);
                     console.log(`🚗 Driver ${userId} joined room vehicle:${dbVehicleType}`);
-                    socket.emit("driver:online:ack", { success: true, message: "You are now online" });
+                    acknowledge({ success: true, message: "You are now online" });
                 } finally {
                     conn.release();
                 }
             } catch (err) {
                 console.error("driver:online error:", err.message);
-                socket.emit("driver:online:ack", { success: false, message: err.message });
+                acknowledge({ success: false, message: err.message });
             }
         });
 
         // ── Driver goes offline ──
+        socket.on("driver:presence", (data) => {
+            const presence = socket.data.driverPresence;
+            if (!presence || !validCoordinates(data?.lat, data?.lng)) return;
+            socket.data.driverPresence = { ...presence, lat: Number(data.lat), lng: Number(data.lng), heading: Number.isFinite(Number(data.heading)) ? Number(data.heading) : presence.heading || 0, updatedAt: Date.now() };
+            void cache.putPresence(socket.id, socket.data.driverPresence, presenceTtlSeconds);
+        });
+
         socket.on("driver:offline", () => {
+            socket.onlineVersion = (socket.onlineVersion || 0) + 1;
+            const presence = socket.data.driverPresence;
+            socket.data.driverPresence = null;
+            if (presence) void cache.removePresence(socket.id, presence.vehicle_type);
             if (socket.driverInfo?.vehicle_type) {
                 socket.leave(`vehicle:${socket.driverInfo.vehicle_type.toLowerCase()}`);
                 console.log(`🛑 Driver ${userId} left room vehicle:${socket.driverInfo.vehicle_type}`);
@@ -250,8 +323,13 @@ function initSocket(server) {
 
         // ── Disconnect ──
         socket.on("disconnect", (reason) => {
+            const presence = socket.data.driverPresence;
+            socket.data.driverPresence = null;
+            if (presence) void cache.removePresence(socket.id, presence.vehicle_type);
             console.log(`❌ Socket disconnected: ${role} (userId: ${userId}, reason: ${reason})`);
         });
+
+        void rejoinActiveRide();
     });
 
     console.log("🔌 Socket.IO initialized");

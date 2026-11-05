@@ -1,9 +1,13 @@
 require("dotenv").config();
+const { connectRedis, closeRedis } = require("./services/redisCache");
+connectRedis();
 const express = require("express");
 const cors = require("cors");
 const http = require("http");
 const path = require("path");
 const Connect_Db = require("./db/Connect_Db");
+const { startChatCleanup } = require("./services/rideChatService");
+const { startRideSearchWorker } = require("./services/rideSearch");
 const { initSocket } = require("./socket/socketManager");
 const userRoutes = require('./routers/users');
 const authRoutes = require('./routers/auth');
@@ -24,7 +28,10 @@ const server = http.createServer(app);
 createWalletTables().catch(err => console.error('Wallet table init error:', err));
 
 // Initialize Socket.IO
-initSocket(server);
+const io = initSocket(server);
+const stopChatCleanup = startChatCleanup(Connect_Db);
+const stopRideSearchWorker = startRideSearchWorker(Connect_Db, io);
+server.on('close', () => { stopChatCleanup(); stopRideSearchWorker(); closeRedis(); });
 
 // Middleware
 app.use(cors());
