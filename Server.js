@@ -1,4 +1,4 @@
-require("dotenv").config();
+require("dotenv").config({ path: require("path").join(__dirname, ".env") });
 const { connectRedis, closeRedis } = require("./services/redisCache");
 connectRedis();
 const express = require("express");
@@ -19,6 +19,7 @@ const supportRoutes = require('./routers/support');
 const notificationRoutes = require('./routers/notification');
 const paymentRoutes = require('./routers/payment');
 const walletRoutes = require('./routers/wallet');
+const { createAdminRouter } = require('./routers/admin');
 const { createWalletTables } = require('./create_wallet_tables');
 
 const app = express();
@@ -72,6 +73,7 @@ app.use("/support", supportRoutes);
 app.use("/notification", notificationRoutes);
 app.use("/payment", paymentRoutes);
 app.use("/wallet", walletRoutes);
+app.use("/admin", createAdminRouter(Connect_Db));
 
 
 // Start server

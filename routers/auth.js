@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const authController = require('../controller/authController');
+const adminAuthController = require('../controller/adminAuthController');
+const createAdminLoginLimiter = require('../utils/adminLoginLimiter');
+
+router.post('/admin-login', createAdminLoginLimiter(), adminAuthController.login);
 
 router.post('/send-otp', authController.sendOtp);
 router.post('/verify-otp', authController.verifyOtp);

@@ -112,9 +112,9 @@ const authController = {
                 const [newUserRows] = await conn.query("SELECT * FROM users WHERE User_ID_Pk = ?", [userId]);
                 user = newUserRows[0];
             } else {
-                // Exclude driver-role users so a rider with the same phone doesn't get the wrong account
+                // Customer OTP must never issue privileged admin tokens.
                 const [userRows] = await conn.query(
-                    "SELECT * FROM users WHERE REPLACE(Mobile, '-', '') = ? AND (Role IS NULL OR Role != 'driver') ORDER BY User_ID_Pk ASC",
+                    "SELECT * FROM users WHERE REPLACE(Mobile, '-', '') = ? AND (Role IS NULL OR LOWER(TRIM(Role)) NOT IN ('driver', 'admin', 'superadmin')) ORDER BY User_ID_Pk ASC",
                     [normalizedPhone]
                 );
                 if (userRows.length === 0) {
@@ -122,6 +122,11 @@ const authController = {
                     return res.status(404).json({ success: false, message: "User not found" });
                 }
                 user = userRows[0];
+            }
+
+            if (['admin', 'superadmin'].includes(String(user.Role || '').trim().toLowerCase())) {
+                await conn.rollback();
+                return res.status(403).json({ success: false, message: "Admin accounts must use the admin sign-in endpoint." });
             }
 
             // Cleanup OTP
@@ -227,9 +232,9 @@ const authController = {
         try {
             conn = await pool.getConnection();
             const normalizedPhone = phone.replace(/-/g, '');
-            // Customer login: only rider accounts (exclude driver so same phone = correct user)
+            // Admins sign in with email/password/security code through /admin-login.
             const [rows] = await conn.query(
-                "SELECT * FROM users WHERE REPLACE(Mobile, '-', '') = ? AND (Role IS NULL OR LOWER(TRIM(Role)) != 'driver') ORDER BY User_ID_Pk ASC LIMIT 1",
+                "SELECT * FROM users WHERE REPLACE(Mobile, '-', '') = ? AND (Role IS NULL OR LOWER(TRIM(Role)) NOT IN ('driver', 'admin', 'superadmin')) ORDER BY User_ID_Pk ASC LIMIT 1",
                 [normalizedPhone]
             );
             if (rows.length === 0) return res.status(401).json({ success: false, message: "Invalid credentials" });
