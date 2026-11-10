@@ -1,3 +1,4 @@
+const { enabled: employeeAccessEnabled, getAccess } = require('./employeeAccess');
 const { DOCUMENTS } = require('./adminDriverProfiles');
 const { formatDriverCode, getDriverWalletBalance } = require('../utils/driverHelper');
 const STATUSES = ['unverified', 'pending', 'active', 'inactive', 'blocked'];
@@ -83,8 +84,9 @@ function createAdminDriversService(pool) {
             let conn; let started = false;
             try {
                 conn = await pool.getConnection(); await conn.beginTransaction(); started = true;
-                const [admins] = await conn.query("SELECT User_ID_Pk FROM users WHERE User_ID_Pk = ? AND LOWER(TRIM(Role)) = 'admin' AND COALESCE(AccountDeleted, 0) = 0 LOCK IN SHARE MODE", [actor]);
+                const [admins] = await conn.query("SELECT User_ID_Pk FROM users WHERE User_ID_Pk = ? AND LOWER(TRIM(Role)) IN ('admin', 'employee') AND COALESCE(AccountDeleted, 0) = 0 LOCK IN SHARE MODE", [actor]);
                 if (!admins.length) throw fail(403, 'An active admin account is required.');
+                if (employeeAccessEnabled()) { const access = await getAccess(conn, actor, { lock: true }); if (!access.functions.includes('drivers')) throw fail(403, 'Driver screen access is required.'); }
                 // Serialize all top-ups for this driver, including simultaneous retries.
                 const [drivers] = await conn.query('SELECT id FROM drivers WHERE id = ? FOR UPDATE', [driverId]);
                 if (!drivers.length) throw fail(404, 'Driver not found.');

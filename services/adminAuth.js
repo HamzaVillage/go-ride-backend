@@ -1,5 +1,6 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { enabled, getAccess } = require('./employeeAccess');
 
 const SESSION_SECONDS = 8 * 60 * 60;
 const INVALID_LOGIN = 'Invalid email, password, or security code.';
@@ -23,15 +24,18 @@ function createAdminLogin({ pool, getSecret = () => process.env.JWT_SECRET }) {
         let conn;
         try {
             conn = await pool.getConnection();
-            const [rows] = await conn.query(
+            let [rows] = await conn.query(
                 `SELECT User_ID_Pk, User_Name, Email, Password, Role, AccountDeleted
                  FROM users WHERE Email = ? AND LOWER(TRIM(Role)) = 'admin'
                  ORDER BY User_ID_Pk ASC LIMIT 2`,
                 [email.trim().toLowerCase()]
             );
+            if (!rows.length && enabled()) {
+                [rows] = await conn.query("SELECT User_ID_Pk, User_Name, Email, Password, Role, AccountDeleted FROM users WHERE Email = ? AND LOWER(TRIM(Role)) = 'employee' ORDER BY User_ID_Pk ASC LIMIT 2", [email.trim().toLowerCase()]);
+            }
             // Fail closed on ambiguous accounts and on unexpected DB response roles.
             const user = rows.length === 1 ? rows[0] : null;
-            const eligible = user && String(user.Role || '').trim().toLowerCase() === 'admin' &&
+            const eligible = user && ['admin', ...(enabled() ? ['employee'] : [])].includes(String(user.Role || '').trim().toLowerCase()) &&
                 (user.AccountDeleted == null || Number(user.AccountDeleted) === 0);
             const hash = eligible && typeof user.Password === 'string' && /^\$2[aby]\$\d{2}\$/.test(user.Password)
                 ? user.Password : DUMMY_HASH;
@@ -39,15 +43,18 @@ function createAdminLogin({ pool, getSecret = () => process.env.JWT_SECRET }) {
             if (!eligible || hash === DUMMY_HASH || !passwordValid || security_code !== '0000') {
                 return res.status(401).json({ success: false, message: INVALID_LOGIN });
             }
-            const token = jwt.sign({ userId: user.User_ID_Pk, role: 'admin' }, secret, {
+            if (enabled()) await getAccess(conn, user.User_ID_Pk);
+            const role = String(user.Role).trim().toLowerCase();
+            const token = jwt.sign({ userId: user.User_ID_Pk, role }, secret, {
                 algorithm: 'HS256', expiresIn: SESSION_SECONDS,
             });
             const expiresAt = jwt.decode(token).exp * 1000;
             return res.json({
                 success: true, message: 'Admin login successful.', token, expiresAt,
-                user: { id: user.User_ID_Pk, name: user.User_Name, email: user.Email, role: 'admin' },
+                user: { id: user.User_ID_Pk, name: user.User_Name, email: user.Email, role },
             });
         } catch (err) {
+            if (err.status === 401) return res.status(401).json({ success: false, message: INVALID_LOGIN });
             console.error('Admin login failed:', err.code || 'INTERNAL_ERROR');
             return res.status(500).json({ success: false, message: 'Unable to sign in right now. Please try again.' });
         } finally {

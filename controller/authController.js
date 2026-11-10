@@ -114,7 +114,7 @@ const authController = {
             } else {
                 // Customer OTP must never issue privileged admin tokens.
                 const [userRows] = await conn.query(
-                    "SELECT * FROM users WHERE REPLACE(Mobile, '-', '') = ? AND (Role IS NULL OR LOWER(TRIM(Role)) NOT IN ('driver', 'admin', 'superadmin')) ORDER BY User_ID_Pk ASC",
+                    "SELECT * FROM users WHERE REPLACE(Mobile, '-', '') = ? AND (Role IS NULL OR LOWER(TRIM(Role)) NOT IN ('driver', 'admin', 'superadmin') AND LOWER(TRIM(COALESCE(Role, ''))) <> 'employee') ORDER BY User_ID_Pk ASC",
                     [normalizedPhone]
                 );
                 if (userRows.length === 0) {
@@ -124,7 +124,7 @@ const authController = {
                 user = userRows[0];
             }
 
-            if (['admin', 'superadmin'].includes(String(user.Role || '').trim().toLowerCase())) {
+            if (['admin', 'superadmin', 'employee'].includes(String(user.Role || '').trim().toLowerCase())) {
                 await conn.rollback();
                 return res.status(403).json({ success: false, message: "Admin accounts must use the admin sign-in endpoint." });
             }
@@ -234,7 +234,7 @@ const authController = {
             const normalizedPhone = phone.replace(/-/g, '');
             // Admins sign in with email/password/security code through /admin-login.
             const [rows] = await conn.query(
-                "SELECT * FROM users WHERE REPLACE(Mobile, '-', '') = ? AND (Role IS NULL OR LOWER(TRIM(Role)) NOT IN ('driver', 'admin', 'superadmin')) ORDER BY User_ID_Pk ASC LIMIT 1",
+                "SELECT * FROM users WHERE REPLACE(Mobile, '-', '') = ? AND (Role IS NULL OR LOWER(TRIM(Role)) NOT IN ('driver', 'admin', 'superadmin') AND LOWER(TRIM(COALESCE(Role, ''))) <> 'employee') ORDER BY User_ID_Pk ASC LIMIT 1",
                 [normalizedPhone]
             );
             if (rows.length === 0) return res.status(401).json({ success: false, message: "Invalid credentials" });
@@ -502,7 +502,7 @@ const authController = {
         try {
             conn = await pool.getConnection();
             const normalizedPhone = phone.replace(/-/g, '');
-            const [rows] = await conn.query("SELECT User_ID_Pk FROM users WHERE REPLACE(Mobile, '-', '') = ?", [normalizedPhone]);
+            const [rows] = await conn.query("SELECT User_ID_Pk FROM users WHERE REPLACE(Mobile, '-', '') = ? AND LOWER(TRIM(COALESCE(Role, ''))) NOT IN ('admin', 'superadmin', 'employee')", [normalizedPhone]);
             if (rows.length === 0) return res.status(404).json({ success: false, message: "User not found" });
 
             await cleanupOTPs(pool);
@@ -559,7 +559,7 @@ const authController = {
 
             await conn.beginTransaction();
             // Update password
-            await conn.query("UPDATE users SET Password = ? WHERE REPLACE(Mobile, '-', '') = ?", [hashedPassword, normalizedPhone]);
+            await conn.query("UPDATE users SET Password = ? WHERE REPLACE(Mobile, '-', '') = ? AND LOWER(TRIM(COALESCE(Role, ''))) NOT IN ('admin', 'superadmin', 'employee')", [hashedPassword, normalizedPhone]);
             // Delete OTP
             await conn.query("DELETE FROM otp_verifications WHERE phone_number = ? AND purpose = 'forgot_password'", [normalizedPhone]);
             await conn.commit();

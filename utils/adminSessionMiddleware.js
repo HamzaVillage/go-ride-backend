@@ -4,7 +4,7 @@ module.exports = (req, res, next) => {
     if (token && process.env.JWT_SECRET) {
         try {
             const user = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
-            if (user.role === 'admin' && Number.isSafeInteger(Number(user.userId)) && Number(user.userId) > 0) {
+            if (['admin', 'employee'].includes(user.role) && Number.isSafeInteger(Number(user.userId)) && Number(user.userId) > 0) {
                 req.user = { ...user, userId: Number(user.userId) };
                 return next();
             }

@@ -43,7 +43,7 @@ const rideController = {
                 });
             }
 
-            await getSearchConfig(conn); // Fail before creating a ride if search settings are invalid.
+            await getSearchConfig(conn, { requireRideEnabled: true }); // Fail before creating a ride if search settings are invalid.
 
             // Fetch the fee percentage for the vehicle type
             const [rateRows] = await conn.query("SELECT Fee_Percentage FROM vehicle_fare_rate WHERE Vehicle_Type = ?", [vehicle_type]);
@@ -96,7 +96,7 @@ const rideController = {
             });
         } catch (err) {
             console.error("Create Ride Error:", err);
-            res.status(500).json({ success: false, message: "Error creating ride", error: err.message });
+            res.status(err.status || 500).json({ success: false, message: err.status ? err.message : "Error creating ride", error: err.message });
         } finally {
             if (conn) conn.release();
         }

@@ -9,11 +9,11 @@ const jwt = require('jsonwebtoken');
  *  3. Header 'Authorization: Bearer <JWT_TOKEN>' where decoded.role === 'admin'
  */
 const adminAuthMiddleware = (req, res, next) => {
-    const configuredApiKey = process.env.ADMIN_API_KEY || 'goride_admin_secure_key_2026';
+    const configuredApiKey = process.env.ADMIN_API_KEY;
 
     // 1. Check custom API key headers
     const apiKeyHeader = req.headers['x-admin-api-key'] || req.headers['x-api-key'];
-    if (apiKeyHeader && apiKeyHeader === configuredApiKey) {
+    if (configuredApiKey && apiKeyHeader && apiKeyHeader === configuredApiKey) {
         req.isAdmin = true;
         return next();
     }
@@ -26,16 +26,17 @@ const adminAuthMiddleware = (req, res, next) => {
             const token = parts[1];
 
             // 2a. Direct API key passed as Bearer token
-            if (token === configuredApiKey) {
+            if (configuredApiKey && token === configuredApiKey) {
                 req.isAdmin = true;
                 return next();
             }
 
             // 2b. JWT token with admin role
             try {
-                const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_fallback_secret');
+                if (!process.env.JWT_SECRET) throw new Error('Admin JWT signing key is not configured.');
+                const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
                 const role = (decoded.role || decoded.Role || decoded.user_type || '').toLowerCase();
-                if (role === 'admin' || role === 'superadmin' || decoded.isAdmin === true) {
+                if (role === 'admin' || role === 'employee' || role === 'superadmin' || decoded.isAdmin === true) {
                     req.user = decoded;
                     req.isAdmin = true;
                     return next();

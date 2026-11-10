@@ -7,6 +7,7 @@ const authMiddleware = (req, res, next) => {
 
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_fallback_secret');
+        if (decoded.role === 'employee') return res.status(403).json({ success: false, message: 'Employee sessions are restricted to the admin panel.' });
         req.user = decoded;
         next();
     } catch (ex) {

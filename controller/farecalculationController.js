@@ -1,112 +1,30 @@
 const pool = require('../db/Connect_Db');
-
-const getKarachiTime = () => {
-    return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Karachi" }));
-};
-
-const getKarachiAutoStatus = () => {
-    const karachiDate = getKarachiTime();
-    const hour = karachiDate.getHours();
-
-    // Peak Hour Check: 08:00 - 11:00 and 17:00 - 20:00
-    const isPeak = (hour >= 8 && hour < 11) || (hour >= 17 && hour < 20);
-
-    // Night Hour Check: 22:00 - 06:00
-    const isNight = (hour >= 22 || hour < 6);
-
-    return { isPeak, isNight };
-};
-
-const calculateEstimatedFare = (vehicle_rate, distance, duration, is_peak_hour, is_night, waiting_time = 0) => {
-    const base_fare = parseFloat(vehicle_rate.Base_Fare);
-    const per_km_rate = parseFloat(vehicle_rate.Per_Km_Rate);
-    const per_minute_rate = parseFloat(vehicle_rate.Per_Minute_Rate);
-
-    // Calculate distance fare (first km included in base fare according to logic)
-    const distance_after_first_km = Math.max(0, distance - 1);
-    const distance_fare = base_fare + (distance_after_first_km * per_km_rate);
-
-    // Calculate time-based charges
-    const time_fare = duration * per_minute_rate;
-
-    // Calculate waiting charges
-    const waiting_charges = waiting_time * per_minute_rate;
-
-    // Calculate base total
-    const base_total = distance_fare + time_fare + waiting_charges;
-
-    // Calculate surcharges
-    let night_charge = 0;
-    let peak_hour_surcharge = 0;
-
-    if (is_night === true || is_night === 'true') {
-        const night_percent = parseFloat(vehicle_rate.Night_Charge_Percent);
-        night_charge = (base_total * night_percent) / 100;
-    }
-
-    if (is_peak_hour === true || is_peak_hour === 'true') {
-        const peak_percent = parseFloat(vehicle_rate.Peak_Hours_Percent);
-        peak_hour_surcharge = (base_total * peak_percent) / 100;
-    }
-
-    // Calculate final fare
-    let total_fare = base_total + night_charge + peak_hour_surcharge;
-
-    // Add Organization Fee (added TO the rider's total)
-    const fee_percent = parseFloat(vehicle_rate.Fee_Percentage || 0);
-    const organization_fee = (total_fare * fee_percent) / 100;
-    total_fare += organization_fee;
-
-    // Round up to nearest 10
-    total_fare = Math.ceil(total_fare / 10) * 10;
-
-    return {
-        total_fare,
-        base_fare,
-        distance_fare: distance_after_first_km * per_km_rate,
-        time_fare,
-        waiting_charges,
-        night_charge,
-        peak_hour_surcharge,
-        fee_percentage: fee_percent,
-        organization_fee: organization_fee
-    };
-};
+const { loadFarePolicy, scheduleStatus, calculateEstimatedFare } = require('../services/farePolicy');
 
 const farecalculationController = {
     calculateFare: async (req, res) => {
-        let { vehicle_type, distance, duration, is_peak_hour, is_night, waiting_time = 0 } = req.body || req.query;
-
-        // Automatically determine status if not provided
-        const autoStatus = getKarachiAutoStatus();
-        if (is_peak_hour === undefined || is_peak_hour === null) {
-            is_peak_hour = autoStatus.isPeak;
-        }
-        if (is_night === undefined || is_night === null) {
-            is_night = autoStatus.isNight;
-        }
-
-        // Validate inputs
-        const errors = [];
-        // vehicle_type is now optional as we return all, but we can use it to determine the "primary" or "requested" one
-        if (distance === undefined || distance <= 0) errors.push('Distance must be greater than 0');
-        if (duration === undefined || duration < 0) errors.push('Duration cannot be negative');
-        if (waiting_time < 0) errors.push('Waiting time cannot be negative');
-
-        if (errors.length > 0) {
-            return res.status(400).json({
-                success: false,
-                message: 'Validation failed',
-                errors: errors
-            });
+        const input = req.method === 'GET' ? req.query : req.body;
+        const { vehicle_type } = input || {};
+        const distance = Number(input?.distance), duration = Number(input?.duration), waiting_time = Number(input?.waiting_time ?? 0);
+        if ((vehicle_type !== undefined && (typeof vehicle_type !== 'string' || vehicle_type.length > 50)) ||
+            input?.distance === undefined || input?.duration === undefined ||
+            ![distance, duration, waiting_time].every(Number.isFinite) || distance <= 0 || distance > 9999.99 || duration < 0 || duration > 100000 || waiting_time < 0 || waiting_time > 100000 ||
+            [input.distance, input.duration, input.waiting_time].some(value => value !== undefined && !['string', 'number'].includes(typeof value))) {
+            return res.status(400).json({ success: false, message: 'Enter a valid positive distance and non-negative duration/waiting time.' });
         }
 
         let conn;
         try {
             conn = await pool.getConnection();
 
-            // Get all active vehicle rates
-            const [allRates] = await conn.query("SELECT * FROM vehicle_fare_rate WHERE Is_Active = 1");
+            const [availability] = await conn.query('SELECT ride_service FROM sysconfigsetup WHERE SCS_ID_Pk = 1');
+            if (!availability.length || Number(availability[0].ride_service) !== 1) return res.status(503).json({ success: false, message: 'Ride booking is temporarily unavailable.' });
+            const policy = await loadFarePolicy(conn);
+            const now = new Date();
+            // The server schedule is authoritative, including for older mobile clients.
+            const { isPeak: is_peak_hour, isNight: is_night } = scheduleStatus(policy, now);
+            const [rates] = await conn.query("SELECT * FROM vehicle_fare_rate WHERE Is_Active = 1 ORDER BY Rate_ID_Pk");
+            const allRates = rates.filter(rate => distance <= Number(rate.Maximum_Distance ?? 9999.99));
 
             if (allRates.length === 0) {
                 return res.status(404).json({
@@ -119,7 +37,7 @@ const farecalculationController = {
             let requestedVehicleData = null;
 
             allRates.forEach(rate => {
-                const calc = calculateEstimatedFare(rate, distance, duration, is_peak_hour, is_night, waiting_time);
+                const calc = calculateEstimatedFare(rate, distance, duration, is_peak_hour, is_night, waiting_time, policy);
 
                 const fareInfo = {
                     vehicle_type: rate.Vehicle_Type,
@@ -151,7 +69,7 @@ const farecalculationController = {
             if (!requestedVehicleData && allRates.length > 0) {
                 requestedVehicleData = {
                     rate: allRates[0],
-                    calc: calculateEstimatedFare(allRates[0], distance, duration, is_peak_hour, is_night, waiting_time)
+                    calc: calculateEstimatedFare(allRates[0], distance, duration, is_peak_hour, is_night, waiting_time, policy)
                 };
             }
 
@@ -162,12 +80,12 @@ const farecalculationController = {
 
             // Prepare breakdown for requested/primary vehicle
             const { rate, calc } = requestedVehicleData;
-            const distance_after_first_km = Math.max(0, distance - 1);
+            const distance_after_first_km = calc.additional_kms;
 
             const breakdown = {
                 base_fare: {
                     amount: calc.base_fare,
-                    description: 'First kilometer charge'
+                    description: `Base fare includes ${policy.included_km} km`
                 },
                 distance_charge: {
                     amount: calc.distance_fare,
@@ -236,20 +154,19 @@ const farecalculationController = {
                     estimated_fares: other_vehicles,
                     cars: cars,
                     karachi_info: {
-                        current_time: getKarachiTime().toLocaleString("en-US", { timeZone: "Asia/Karachi" }),
-                        peak_hours: '8:00 AM - 11:00 AM, 5:00 PM - 8:00 PM',
-                        night_hours: '10:00 PM - 6:00 AM',
+                        current_time: now.toLocaleString("en-US", { timeZone: "Asia/Karachi" }),
+                        peak_hours: policy.peak_enabled ? policy.peak_windows.map(window => `${window.start} - ${window.end} (${window.days.map(day => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][day]).join(', ')})`).join('; ') : 'Disabled',
+                        night_hours: policy.night_enabled ? `${policy.night_start} - ${policy.night_end}` : 'Disabled',
                         currency: 'PKR (Pakistani Rupees)'
                     }
                 }
             });
 
         } catch (err) {
-            console.error("Fare Calc Error:", err);
+            console.error("Fare Calc Error:", err.code || 'INTERNAL_ERROR');
             res.status(500).json({
                 success: false,
-                message: 'Database error',
-                error: err.message
+                message: 'Unable to calculate fares right now.'
             });
         } finally {
             if (conn) conn.release();

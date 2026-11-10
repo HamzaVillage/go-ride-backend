@@ -1,12 +1,13 @@
 const express = require('express');
+const { withScreenAccess } = require('../services/employeeAccess');
 const router = express.Router();
 const adminAuthMiddleware = require('../utils/chatAdminAuthMiddleware');
 const chat = require('../controller/rideChatController');
 const rideController = require('../controller/rideController');
 const authMiddleware = require('../utils/authMiddleware');
 
-router.get('/chat/reports', adminAuthMiddleware, chat.noStore, chat.reports);
-router.get('/chat/reports/:reportId', adminAuthMiddleware, chat.noStore, chat.reportDetail);
+router.get('/chat/reports', withScreenAccess(adminAuthMiddleware, 'reports'), chat.noStore, chat.reports);
+router.get('/chat/reports/:reportId', withScreenAccess(adminAuthMiddleware, 'reports'), chat.noStore, chat.reportDetail);
 router.get('/:rideId/chat', authMiddleware, chat.noStore, chat.enabled, chat.history);
 router.post('/:rideId/chat/messages', authMiddleware, chat.noStore, chat.enabled, chat.send);
 router.post('/:rideId/chat/report', authMiddleware, chat.noStore, chat.enabled, chat.report);

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
-for (const role of ['admin','superadmin',' ADMIN ']) test(`customer OTP cannot issue ${role} tokens`, async () => {
+for (const role of ['admin','superadmin',' ADMIN ','employee',' EMPLOYEE ']) test(`customer OTP cannot issue ${role} tokens`, async () => {
     let rolledBack = false; let signed = false; let released = false;
     const conn = { beginTransaction: async () => {}, rollback: async () => { rolledBack = true; }, release: () => { released = true; }, async query(sql) {
         if (sql.includes('FROM otp_verifications')) return [[{purpose:'general',otp_hash:'111111'}]];

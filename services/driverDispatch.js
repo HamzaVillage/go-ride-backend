@@ -7,11 +7,12 @@ function positiveSetting(name, fallback, max) {
 
 const SEARCH_STAGE_SECONDS = 10;
 const SEARCH_STEP_KM = 1;
-async function getSearchConfig(conn) {
+async function getSearchConfig(conn, { requireRideEnabled = false } = {}) {
     const rows = await cache.remember('search:config', 5, async () => {
-        const [result] = await conn.query("SELECT dispatch_radius_km, dispatch_min_radius_km FROM sysconfigsetup WHERE SCS_ID_Pk = 1 LIMIT 1");
+        const [result] = await conn.query("SELECT dispatch_radius_km, dispatch_min_radius_km, ride_service FROM sysconfigsetup WHERE SCS_ID_Pk = 1 LIMIT 1");
         return result;
     });
+    if (requireRideEnabled && rows[0]?.ride_service != null && Number(rows[0].ride_service) !== 1) throw Object.assign(new Error('Ride booking is temporarily unavailable.'), { status: 503 });
     const max = rows[0]?.dispatch_radius_km;
     const min = rows[0]?.dispatch_min_radius_km;
     if (!numeric(max) || !numeric(min) || Number(min) <= 0 || Number(max) < Number(min)) {

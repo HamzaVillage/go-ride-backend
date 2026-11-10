@@ -86,7 +86,7 @@ test('admin HTTP routes reject rider, superadmin, missing, and forged tokens bef
     t.after(()=>{if(old===undefined)delete process.env.JWT_SECRET;else process.env.JWT_SECRET=old;});
     let calls=0;const app=express();app.use(express.json());app.use('/admin',createAdminRouter({getConnection(){calls++;throw new Error('database should not be reached');}}));
     const server=app.listen(0,'127.0.0.1');t.after(()=>new Promise(resolve=>server.close(resolve)));await once(server,'listening');const origin=`http://127.0.0.1:${server.address().port}`;
-    for(const token of ['',jwt.sign({userId:7,role:'rider'},secret),jwt.sign({userId:7,role:'superadmin'},secret),jwt.sign({userId:7,role:'admin'},'forged-secret')])for(const path of ['/admin/overview','/admin/drivers','/admin/drivers/10/wallet','/admin/drivers/10/topups']){
+    for(const token of ['',jwt.sign({userId:7,role:'rider'},secret),jwt.sign({userId:7,role:'superadmin'},secret),jwt.sign({userId:7,role:'admin'},'forged-secret')])for(const path of ['/admin/franchises','/admin/franchises/7','/admin/rides','/admin/riders','/admin/support','/admin/overview','/admin/drivers','/admin/drivers/10/wallet','/admin/drivers/10/topups']){
         const response=await fetch(origin+path,{method:path.endsWith('topups')?'POST':'GET',headers:{Authorization:`Bearer ${token}`}});assert.equal(response.status,401);await response.json();
     }assert.equal(calls,0);
 });
