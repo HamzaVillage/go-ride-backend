@@ -12,6 +12,9 @@ const sysConfigController = {
                     courier_service, 
                     food_delivery_service, 
                     grocery_service, 
+                    city_to_city_service,
+                    hotel_booking_service,
+                    car_rental_service,
                     fare_increaser,
                     dispatch_min_radius_km,
                     dispatch_radius_km

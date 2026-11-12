@@ -23,6 +23,7 @@ async function fixture({ status = 'active', available = 1, busy = false, walletW
     }
     let connections = 0;
     const dependencies = {
+        '../services/cityToCityRealtime': { registerCityToCityRealtime() {} },
         '../services/rideCompletionSettlement': require('../services/rideCompletionSettlement'),
         '../services/rideChatService': require('../services/rideChatService'),
         '../services/redisCache': require('../services/redisCache'),

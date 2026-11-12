@@ -18,9 +18,13 @@ function ids(value) {
 }
 function validateEmployee(body, creating = false) {
     if (!body || Array.isArray(body) || typeof body !== 'object') throw fail(400, 'Invalid employee details.');
-    const allowed = ['name', 'email', 'phone', 'cnic', 'father_name', 'father_cnic', 'address', 'password', 'is_active', 'is_deleted', 'role_ids', 'version'];
+    const allowed = ['name', 'email', 'phone', 'cnic', 'father_name', 'father_cnic', 'address', 'password', 'is_active', 'is_deleted', 'role_ids', 'version', 'account_type'];
     if (Object.keys(body).some(key => !allowed.includes(key))) throw fail(400, 'Unknown employee field.');
     const data = {};
+    if (creating || Object.hasOwn(body, 'account_type')) {
+        data.account_type = body.account_type || 'employee';
+        if (!['employee', 'superadmin'].includes(data.account_type)) throw fail(400, 'Choose employee or super administrator.');
+    }
     for (const [key, max, required] of [['name', 50, true], ['email', 100, true], ['phone', 30, true], ['address', 1000, false], ['father_name', 100, false]]) {
         if (creating || Object.hasOwn(body, key)) data[key] = text(body[key], key.replaceAll('_', ' '), max, required);
     }
@@ -39,7 +43,7 @@ function validateEmployee(body, creating = false) {
     return data;
 }
 const DOC_KEYS = ['cnic_front', 'cnic_back', 'other_document'];
-const employeeColumns = `emp_id, user_id, name, email, phone, cnic, father_name, father_cnic, address,
+const employeeColumns = `emp_id, account_type, name, email, phone, cnic, father_name, father_cnic, address,
     cnic_front IS NOT NULL AS has_cnic_front, cnic_back IS NOT NULL AS has_cnic_back, other_document IS NOT NULL AS has_other_document,
     is_active, is_deleted, version, created_at, created_by, updated_at, updated_by`;
 function normalize(row) { return { ...row, is_active: Boolean(row.is_active), is_deleted: Boolean(row.is_deleted) }; }
@@ -51,7 +55,7 @@ function createEmployeeService(pool) {
             conn = await pool.getConnection(); await conn.beginTransaction();
             const access = await getAccess(conn, idOf(actor), { lock: true });
             if (!access.functions.includes('employees')) throw fail(403, 'Employee access management is not allowed.');
-            const result = await action(conn); await conn.commit(); return result;
+            const result = await action(conn, access); await conn.commit(); return result;
         } catch (error) {
             if (conn) await conn.rollback().catch(() => {});
             if (error.code === 'ER_DUP_ENTRY') throw fail(409, 'This email, CNIC, role name, or function code is already in use.');
@@ -95,7 +99,7 @@ function createEmployeeService(pool) {
             return read(async conn => {
                 const [counts] = await conn.query(`SELECT COUNT(*) AS total FROM employee e WHERE ${where.join(' AND ')}`, args);
                 // The directory omits CNIC, family details, address, credentials and document paths.
-                const [rows] = await conn.query(`SELECT e.emp_id, e.name, e.email, e.phone, e.is_active, e.version, e.created_at,
+                const [rows] = await conn.query(`SELECT e.emp_id, e.account_type, e.name, e.email, e.phone, e.is_active, e.version, e.created_at,
                     (SELECT GROUP_CONCAT(r.role_name ORDER BY r.role_name SEPARATOR ', ') FROM assign_role a JOIN employee_role r ON r.role_id = a.role_id
                     WHERE a.emp_id = e.emp_id AND a.is_active = 1 AND a.is_deleted = 0 AND r.is_deleted = 0) AS roles
                     FROM employee e WHERE ${where.join(' AND ')} ORDER BY e.emp_id DESC LIMIT ? OFFSET ?`, [...args, limit, (page - 1) * limit]);
@@ -107,31 +111,25 @@ function createEmployeeService(pool) {
         async saveEmployee(id, actor, body) {
             const data = validateEmployee(body, !id);
             const hash = body.password !== undefined ? await bcrypt.hash(body.password, 12) : null;
-            return mutate(actor, async conn => {
-                let employeeId, userId;
+            return mutate(actor, async (conn, access) => {
+                let employeeId;
                 if (id) {
                     const row = await locked(conn, 'employee', 'emp_id', id, body.version);
-                    if (Number(row.user_id) === Number(actor) && (body.is_active === false || body.is_deleted === true || body.role_ids !== undefined)) throw fail(400, 'Ask another access administrator to change your own status or role assignments.');
-                    employeeId = Number(row.emp_id); userId = row.user_id;
-                }
+                    if (!access.is_super_admin && (row.account_type === 'superadmin' || data.account_type === 'superadmin')) throw fail(403, 'Only a super administrator can manage super administrators.');
+                    if (Number(row.emp_id) === Number(actor) && (body.is_active === false || body.is_deleted === true || body.role_ids !== undefined || (data.account_type && data.account_type !== row.account_type))) throw fail(400, 'Ask another super administrator to change your own status, account type or role assignments.');
+                    employeeId = Number(row.emp_id);
+                } else if (data.account_type === 'superadmin' && !access.is_super_admin) throw fail(403, 'Only a super administrator can create super administrators.');
                 if (data.email) {
-                    const [existing] = await conn.query('SELECT User_ID_Pk FROM users WHERE LOWER(TRIM(Email)) = ? AND User_ID_Pk <> ? LIMIT 1', [data.email, userId || 0]);
-                    if (existing.length) throw fail(409, 'This email is already linked to an account.');
+                    const [existing] = await conn.query('SELECT emp_id FROM employee WHERE LOWER(TRIM(email)) = ? AND emp_id <> ? LIMIT 1', [data.email, employeeId || 0]);
+                    if (existing.length) throw fail(409, 'This email is already linked to an employee account.');
                 }
+                if (hash) data.password_hash = hash;
+                const fields = Object.keys(data);
                 if (!id) {
-                    const [user] = await conn.query("INSERT INTO users (User_Name, Email, Mobile, Password, Role, AccountDeleted) VALUES (?, ?, ?, ?, 'employee', 0)", [data.name, data.email, data.phone, hash]);
-                    userId = user.insertId;
-                    const fields = Object.keys(data);
-                    const [employee] = await conn.query(`INSERT INTO employee (user_id, ${fields.join(',')}, created_by, updated_by) VALUES (?, ${fields.map(() => '?').join(',')}, ?, ?)`, [userId, ...Object.values(data), actor, actor]);
+                    const [employee] = await conn.query(`INSERT INTO employee (${fields.join(',')}, created_by, updated_by) VALUES (${fields.map(() => '?').join(',')}, ?, ?)`, [...Object.values(data), actor, actor]);
                     employeeId = employee.insertId;
                 } else {
-                    const fields = Object.keys(data);
                     await conn.query(`UPDATE employee SET ${fields.map(key => `${key} = ?, `).join('')} version = version + 1, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE emp_id = ?`, [...Object.values(data), actor, employeeId]);
-                    const userChanges = [];
-                    const values = [];
-                    for (const [key, column] of [['name', 'User_Name'], ['email', 'Email'], ['phone', 'Mobile']]) if (data[key] !== undefined) { userChanges.push(`${column} = ?`); values.push(data[key]); }
-                    if (hash) { userChanges.push('Password = ?'); values.push(hash); }
-                    if (userChanges.length) await conn.query(`UPDATE users SET ${userChanges.join(',')} WHERE User_ID_Pk = ?`, [...values, userId]);
                 }
                 if (body.role_ids !== undefined) await replaceAssignments(conn, 'assign_role', 'emp_id', employeeId, 'role_id', body.role_ids, actor);
                 if (data.is_deleted) return { emp_id: employeeId, is_deleted: true };
@@ -182,7 +180,7 @@ function createEmployeeService(pool) {
         },
         async attachDocument(id, actor, key, version, source) {
             if (!DOC_KEYS.includes(key)) throw fail(400, 'Unknown document type.');
-            return mutate(actor, async conn => { await locked(conn, 'employee', 'emp_id', id, version); await conn.query(`UPDATE employee SET ${key} = ?, version = version + 1, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE emp_id = ?`, [source, actor, id]); return detail(conn, id); });
+            return mutate(actor, async (conn, access) => { const row = await locked(conn, 'employee', 'emp_id', id, version); if (row.account_type === 'superadmin' && !access.is_super_admin) throw fail(403, 'Only a super administrator can manage super administrators.'); await conn.query(`UPDATE employee SET ${key} = ?, version = version + 1, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE emp_id = ?`, [source, actor, id]); return detail(conn, id); });
         },
     };
 }

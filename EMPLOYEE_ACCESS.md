@@ -1,3 +1,5 @@
+> Staff identities now live only in `employee`. The independent-staff upgrade and current authentication contract are documented in [staff identities](docs/staff-identities.md); that document supersedes legacy users-based setup below.
+
 # Employees, roles and screen access
 
 The existing backend uses MySQL/MariaDB. `dbo` is a SQL Server schema prefix, so the five tables are created in the configured MySQL database without that prefix.

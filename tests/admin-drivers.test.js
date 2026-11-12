@@ -15,7 +15,7 @@ function ledgerFixture({driverExists=true,adminActive=true,failInsert=false,fail
         async rollback(){staged=[];state.rollbacks++;unlock?.();unlock=null;},
         release(){state.released++;},
         async query(sql,args){
-            if(sql.includes('FROM users')) {assert.match(sql,/LOCK IN SHARE MODE/);return [adminActive?[{User_ID_Pk:7}]:[]];}
+            if(sql.includes('FROM employee WHERE')) {assert.match(sql,/emp_id = \?/);return [adminActive?[{emp_id:7,account_type:'superadmin',is_active:1,is_deleted:0}]:[]];}
             if(sql.includes('FROM drivers WHERE id')) {
                 const previous=state.lockTail;state.lockTail=new Promise(resolve=>{unlock=resolve;});await previous;
                 assert.match(sql,/FOR UPDATE/);return [driverExists?[{id:args[0]}]:[]];
@@ -86,14 +86,14 @@ test('admin HTTP routes reject rider, superadmin, missing, and forged tokens bef
     t.after(()=>{if(old===undefined)delete process.env.JWT_SECRET;else process.env.JWT_SECRET=old;});
     let calls=0;const app=express();app.use(express.json());app.use('/admin',createAdminRouter({getConnection(){calls++;throw new Error('database should not be reached');}}));
     const server=app.listen(0,'127.0.0.1');t.after(()=>new Promise(resolve=>server.close(resolve)));await once(server,'listening');const origin=`http://127.0.0.1:${server.address().port}`;
-    for(const token of ['',jwt.sign({userId:7,role:'rider'},secret),jwt.sign({userId:7,role:'superadmin'},secret),jwt.sign({userId:7,role:'admin'},'forged-secret')])for(const path of ['/admin/franchises','/admin/franchises/7','/admin/rides','/admin/riders','/admin/support','/admin/overview','/admin/drivers','/admin/drivers/10/wallet','/admin/drivers/10/topups']){
+    for(const token of ['',jwt.sign({userId:7,role:'rider'},secret),jwt.sign({userId:7,role:'superadmin'},secret),jwt.sign({employeeId:7,auth_type:'staff',role:'admin'},'forged-secret')])for(const path of ['/admin/franchises','/admin/franchises/7','/admin/rides','/admin/riders','/admin/support','/admin/overview','/admin/drivers','/admin/drivers/10/wallet','/admin/drivers/10/topups']){
         const response=await fetch(origin+path,{method:path.endsWith('topups')?'POST':'GET',headers:{Authorization:`Bearer ${token}`}});assert.equal(response.status,401);await response.json();
     }assert.equal(calls,0);
 });
 test('HTTP top-up uses authenticated admin identity and ignores body identity',async t=>{
     const f=ledgerFixture();const old=process.env.JWT_SECRET;process.env.JWT_SECRET='route-identity-secret';t.after(()=>{if(old===undefined)delete process.env.JWT_SECRET;else process.env.JWT_SECRET=old;});
     const app=express();app.use(express.json());app.use('/admin',createAdminRouter(f.pool));const server=app.listen(0,'127.0.0.1');t.after(()=>new Promise(resolve=>server.close(resolve)));await once(server,'listening');
-    const token=jwt.sign({userId:7,role:'admin'},process.env.JWT_SECRET,{expiresIn:'1h'});
+    const token=jwt.sign({employeeId:7,auth_type:'staff',role:'admin'},process.env.JWT_SECRET,{expiresIn:'1h'});
     const response=await fetch(`http://127.0.0.1:${server.address().port}/admin/drivers/10/topups`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json','Idempotency-Key':key},body:JSON.stringify({...body,created_by:999,admin_id:999})});
     assert.equal(response.status,200);assert.equal((await response.json()).data.driver_id,10);assert.equal(f.state.entries[0].created_by,7);
 });

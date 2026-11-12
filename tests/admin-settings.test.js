@@ -6,7 +6,7 @@ const path = require('node:path');
 const { DEFAULT_POLICY, validatePolicy, scheduleStatus, calculateEstimatedFare, loadFarePolicy } = require('../services/farePolicy');
 const { createAdminSettings, normalizeSettings, versionOf, CONFIG_KEYS, RATE_FIELDS } = require('../services/adminSettings');
 const rate = { Rate_ID_Pk: 1, Vehicle_Type: 'Mini', Currency: 'PKR', Is_Active: true, Base_Fare: 100, Per_Km_Rate: 20, Per_Minute_Rate: 5, Fee_Percentage: 10, Night_Charge_Percent: 20, Peak_Hours_Percent: 25, Minimum_Distance: 1, Maximum_Distance: 50, rides_limit: 0, rides_over_limit_count: 300 };
-function document() { return normalizeSettings({ services: { ride_service: true, courier_service: false, food_delivery_service: false, grocery_service: false, fare_increaser: true, dispatch_min_radius_km: 1, dispatch_radius_km: 5 }, policy: structuredClone(DEFAULT_POLICY), rates: [{ ...rate }] }); }
+function document() { return normalizeSettings({ services: { ride_service: true, courier_service: false, food_delivery_service: false, grocery_service: false, city_to_city_service: false, hotel_booking_service: false, car_rental_service: false, fare_increaser: true, dispatch_min_radius_km: 1, dispatch_radius_km: 5 }, policy: structuredClone(DEFAULT_POLICY), rates: [{ ...rate }] }); }
 test('default pricing preserves included first km, time/waiting, additive surcharges, fee and upward rounding', () => {
     const calculation = calculateEstimatedFare(rate, 5, 10, true, false, 0);
     assert.equal(calculation.base_fare, 100); assert.equal(calculation.distance_fare, 80); assert.equal(calculation.time_fare, 50);
@@ -38,7 +38,7 @@ function fixture({ failAudit = false, policyMissing = false, auditMissing = fals
         async query(sql, args) {
             const current = pending || state.configuration;
             if (sql.startsWith('SET TRANSACTION')) return [[]];
-            if (sql.includes('FROM users')) return [[{ User_ID_Pk: 7 }]];
+            if (sql.includes('FROM employee WHERE')) return [[{emp_id:7,account_type:'superadmin',is_active:1,is_deleted:0}]];
             if (sql.startsWith('SELECT') && sql.includes('FROM sysconfigsetup')) return [[current.services]];
             if (sql.startsWith('SELECT') && sql.includes('FROM fare_policy')) { if (policyMissing) throw Object.assign(new Error('missing optional policy'), { code: 'ER_NO_SUCH_TABLE' }); return [[{ policy_json: JSON.stringify(current.policy) }]]; }
             if (sql.startsWith('SELECT') && sql.includes('FROM vehicle_fare_rate')) return [current.rates];
@@ -53,9 +53,10 @@ function fixture({ failAudit = false, policyMissing = false, auditMissing = fals
 }
 test('settings update commits rates, schedules and switches together with authenticated actor audit', async () => {
     const f = fixture(); const initial = await f.service.get(); const next = structuredClone(initial.configuration);
-    next.rates[0].Base_Fare = 150; next.services.courier_service = true; next.policy.peak_windows[0].start = '07:30';
+    next.rates[0].Base_Fare = 150; next.services.courier_service = true; next.services.city_to_city_service = true; next.services.hotel_booking_service = true; next.services.car_rental_service = true; next.policy.peak_windows[0].start = '07:30';
     const result = await f.service.update(7, { version: initial.version, configuration: next });
     assert.equal(result.configuration.rates[0].Base_Fare, 150); assert.equal(f.state.configuration.services.courier_service, true);
+    for (const key of ['city_to_city_service', 'hotel_booking_service', 'car_rental_service']) assert.equal(result.configuration.services[key], true);
     assert.notEqual(result.version, initial.version); assert.equal(f.state.audits[0][0], 7); assert.equal(JSON.parse(f.state.audits[0][1]).rates[0].Base_Fare, 100);
     assert.equal(f.state.rollbacks, 0); assert.equal(f.state.released, 2);
 });

@@ -10,7 +10,7 @@ function createDriverProfileRouter(pool){
     const guard=(req,res,next)=>{try{service.requireWrites();next();}catch(error){sendError(res,error);}};
     const parse=multer({storage:multer.memoryStorage(),limits:{fileSize:MAX_BYTES,files:1,fields:2,fieldSize:1024}}).single('document');
     router.get('/:driverId/profile',respond(req=>service.detail(req.params.driverId)));
-    router.patch('/:driverId/profile',guard,respond(req=>service.update(req.params.driverId,req.user.userId,req.body)));
+    router.patch('/:driverId/profile',guard,respond(req=>service.update(req.params.driverId,req.user.employeeId,req.body)));
     router.get('/:driverId/documents/:key',async(req,res)=>{
         try{const source=await service.documentSource(req.params.driverId,req.params.key);const file=await readDocument(source);res.set({'Content-Type':file.mime,'X-Content-Type-Options':'nosniff','Content-Disposition':`inline; filename="driver-${req.params.driverId}-${req.params.key}${file.ext}"`,'Content-Security-Policy':"default-src 'none'; sandbox"});res.send(file.buffer);}catch(error){sendError(res,error);}
     });
@@ -21,7 +21,7 @@ function createDriverProfileRouter(pool){
         let stored;
         try{
             stored=await storeDocument(req.file,req.params.key);
-            const data=await service.attachDocument(req.params.driverId,req.user.userId,req.params.key,req.body.version,stored.storedPath,req.body.replace==='true');
+            const data=await service.attachDocument(req.params.driverId,req.user.employeeId,req.params.key,req.body.version,stored.storedPath,req.body.replace==='true');
             res.json({success:true,data});
         }catch(error){
             // Preserve every pre-existing document, including on replacement. A

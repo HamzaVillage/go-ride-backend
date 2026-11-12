@@ -1,3 +1,5 @@
+> Staff identities now live only in `employee`. The independent-staff upgrade and current authentication contract are documented in [staff identities](docs/staff-identities.md); that document supersedes legacy users-based setup below.
+
 # Admin sign-in
 
 `POST /auth/admin-login`

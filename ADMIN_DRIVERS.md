@@ -1,3 +1,5 @@
+> Staff identities now live only in `employee`. The independent-staff upgrade and current authentication contract are documented in [staff identities](docs/staff-identities.md); that document supersedes legacy users-based setup below.
+
 # Admin drivers and manual wallet top-ups
 
 All endpoints require an unexpired HS256 JWT issued by `/auth/admin-login`, with `role: "admin"` and the authenticated `userId`. API keys, rider/driver tokens, and superadmin tokens are not accepted for these endpoints. Top-ups also verify that the acting admin still exists and is not deleted. Responses use `Cache-Control: no-store, private`.

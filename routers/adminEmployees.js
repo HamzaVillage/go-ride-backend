@@ -20,12 +20,12 @@ function createEmployeeRouter(pool) {
     const respond = action => async (req, res) => { try { res.json({ success: true, data: await action(req) }); } catch (err) { error(res, err); } };
     router.get('/', respond(req => service.list(req.query)));
     router.get('/catalog', respond(() => service.catalog()));
-    router.post('/roles', respond(req => service.saveRole(null, req.user.userId, req.body)));
-    router.patch('/roles/:id', respond(req => service.saveRole(req.params.id, req.user.userId, req.body)));
-    router.patch('/functions/:id', respond(req => service.saveFunction(req.params.id, req.user.userId, req.body)));
-    router.post('/', respond(req => service.saveEmployee(null, req.user.userId, req.body)));
+    router.post('/roles', respond(req => service.saveRole(null, req.user.employeeId, req.body)));
+    router.patch('/roles/:id', respond(req => service.saveRole(req.params.id, req.user.employeeId, req.body)));
+    router.patch('/functions/:id', respond(req => service.saveFunction(req.params.id, req.user.employeeId, req.body)));
+    router.post('/', respond(req => service.saveEmployee(null, req.user.employeeId, req.body)));
     router.get('/:id', respond(req => service.detail(req.params.id)));
-    router.patch('/:id', respond(req => service.saveEmployee(req.params.id, req.user.userId, req.body)));
+    router.patch('/:id', respond(req => service.saveEmployee(req.params.id, req.user.employeeId, req.body)));
     router.get('/:id/documents/:key', async (req, res) => {
         try {
             const source = await service.documentSource(req.params.id, req.params.key);
@@ -42,7 +42,7 @@ function createEmployeeRouter(pool) {
         let stored;
         try {
             stored = await storeDocument(req.file, req.params.key, { locations: locations() });
-            const data = await service.attachDocument(req.params.id, req.user.userId, req.params.key, Number(req.body.version), stored.storedPath);
+            const data = await service.attachDocument(req.params.id, req.user.employeeId, req.params.key, Number(req.body.version), stored.storedPath);
             res.json({ success: true, data });
         } catch (err) {
             if (stored && err.status && err.status < 500) await fs.unlink(stored.filePath).catch(() => {});

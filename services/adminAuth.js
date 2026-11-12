@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
+const maintenance = require('../utils/staffMaintenance');
 const jwt = require('jsonwebtoken');
-const { enabled, getAccess } = require('./employeeAccess');
+const { getAccess } = require('./employeeAccess');
 
 const SESSION_SECONDS = 8 * 60 * 60;
 const INVALID_LOGIN = 'Invalid email, password, or security code.';
@@ -9,6 +10,7 @@ const DUMMY_HASH = bcrypt.hashSync('unused-admin-login-timing-value', 10);
 
 function createAdminLogin({ pool, getSecret = () => process.env.JWT_SECRET }) {
     return async (req, res) => {
+        if (maintenance.active()) return maintenance.middleware(req,res,()=>{});
         res.set('Cache-Control', 'no-store, private');
         const { email, password, security_code } = req.body || {};
         if (typeof email !== 'string' || email.trim().length > 100 ||
@@ -24,34 +26,27 @@ function createAdminLogin({ pool, getSecret = () => process.env.JWT_SECRET }) {
         let conn;
         try {
             conn = await pool.getConnection();
-            let [rows] = await conn.query(
-                `SELECT User_ID_Pk, User_Name, Email, Password, Role, AccountDeleted
-                 FROM users WHERE Email = ? AND LOWER(TRIM(Role)) = 'admin'
-                 ORDER BY User_ID_Pk ASC LIMIT 2`,
+            const [rows] = await conn.query(
+                'SELECT emp_id, name, email, password_hash, account_type, is_active, is_deleted FROM employee WHERE LOWER(TRIM(email)) = ? ORDER BY emp_id ASC LIMIT 2',
                 [email.trim().toLowerCase()]
             );
-            if (!rows.length && enabled()) {
-                [rows] = await conn.query("SELECT User_ID_Pk, User_Name, Email, Password, Role, AccountDeleted FROM users WHERE Email = ? AND LOWER(TRIM(Role)) = 'employee' ORDER BY User_ID_Pk ASC LIMIT 2", [email.trim().toLowerCase()]);
-            }
-            // Fail closed on ambiguous accounts and on unexpected DB response roles.
             const user = rows.length === 1 ? rows[0] : null;
-            const eligible = user && ['admin', ...(enabled() ? ['employee'] : [])].includes(String(user.Role || '').trim().toLowerCase()) &&
-                (user.AccountDeleted == null || Number(user.AccountDeleted) === 0);
-            const hash = eligible && typeof user.Password === 'string' && /^\$2[aby]\$\d{2}\$/.test(user.Password)
-                ? user.Password : DUMMY_HASH;
+            const eligible = user && ['superadmin', 'employee'].includes(user.account_type) && Number(user.is_active) === 1 && Number(user.is_deleted) === 0;
+            const hash = eligible && typeof user.password_hash === 'string' && /^\$2[aby]\$\d{2}\$/.test(user.password_hash)
+                ? user.password_hash : DUMMY_HASH;
             const passwordValid = await bcrypt.compare(password, hash);
             if (!eligible || hash === DUMMY_HASH || !passwordValid || security_code !== '0000') {
                 return res.status(401).json({ success: false, message: INVALID_LOGIN });
             }
-            if (enabled()) await getAccess(conn, user.User_ID_Pk);
-            const role = String(user.Role).trim().toLowerCase();
-            const token = jwt.sign({ userId: user.User_ID_Pk, role }, secret, {
+            await getAccess(conn, user.emp_id);
+            const role = user.account_type === 'superadmin' ? 'admin' : 'employee';
+            const token = jwt.sign({ employeeId: Number(user.emp_id), auth_type: 'staff', role }, secret, {
                 algorithm: 'HS256', expiresIn: SESSION_SECONDS,
             });
             const expiresAt = jwt.decode(token).exp * 1000;
             return res.json({
                 success: true, message: 'Admin login successful.', token, expiresAt,
-                user: { id: user.User_ID_Pk, name: user.User_Name, email: user.Email, role },
+                user: { id: Number(user.emp_id), name: user.name, email: user.email, role },
             });
         } catch (err) {
             if (err.status === 401) return res.status(401).json({ success: false, message: INVALID_LOGIN });

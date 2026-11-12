@@ -19,7 +19,7 @@ test('chat reports reject fallback credentials and rider JWTs; configured admin 
         process.env.JWT_SECRET = 'test-only-admin-secret';
         const rider = jwt.sign({ userId: 99, role: 'rider' }, process.env.JWT_SECRET);
         assert.equal(check({ authorization: `Bearer ${rider}` }).allowed, false);
-        const token = jwt.sign({ userId: 1, role: 'admin' }, process.env.JWT_SECRET);
+        const token = jwt.sign({ employeeId: 1, auth_type:'staff', role: 'admin' }, process.env.JWT_SECRET);
         assert.equal(check({ authorization: `Bearer ${token}` }).allowed, true);
         process.env.ADMIN_API_KEY = 'test-only-admin-key';
         assert.equal(check({ 'x-admin-api-key': process.env.ADMIN_API_KEY }).allowed, true);

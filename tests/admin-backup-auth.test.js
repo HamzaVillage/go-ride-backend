@@ -18,8 +18,7 @@ async function fixture(t, { employee = false, inactive = false } = {}) {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'goride-backup-http-')); t.after(() => fs.rm(directory, { recursive: true, force: true }));
     const filePath = path.join(directory, 'fixture.sql.gz'); await fs.writeFile(filePath, gzipSync('CREATE TABLE fixture (id INT);'));
     const conn = { release() {}, async query(sql) {
-        if (sql.includes('FROM users')) return [[{ User_ID_Pk: 7, Role: employee ? 'employee' : 'admin' }]];
-        if (sql.includes('FROM employee WHERE user_id')) return [employee ? [{ emp_id: 8, is_active: inactive ? 0 : 1, is_deleted: 0 }] : []];
+        if (sql.includes('FROM employee')) return [[{ emp_id:7, account_type:employee?'employee':'superadmin', is_active:inactive?0:1, is_deleted:0 }]];
         if (sql.includes('SELECT DISTINCT')) return [[{ function_code: 'settings' }]];
         throw new Error('Unexpected SQL');
     } };
@@ -27,7 +26,7 @@ async function fixture(t, { employee = false, inactive = false } = {}) {
     const backup = { status: async () => ({ available: true, snapshot_mode: 'transaction' }), async generate() { generated++; return { filePath, filename: 'fixture.sql.gz', size: (await fs.stat(filePath)).size, snapshot_mode: 'transaction', cleanup: async () => { cleaned++; } }; } };
     const app = express(); app.use(express.json()); app.use('/admin', createAdminRouter(pool, { backup }));
     const server = app.listen(0, '127.0.0.1'); t.after(() => new Promise(resolve => server.close(resolve))); await once(server, 'listening');
-    const origin = `http://127.0.0.1:${server.address().port}`; const token = jwt.sign({ userId: 7, role: employee ? 'employee' : 'admin' }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const origin = `http://127.0.0.1:${server.address().port}`; const token = jwt.sign({ employeeId: 7, auth_type:'staff', role: employee ? 'employee' : 'admin' }, process.env.JWT_SECRET, { expiresIn: '1h' });
     return { origin, token, generated: () => generated, cleaned: () => cleaned };
 }
 test('settings permission does not allow an employee to download the entire database', async t => {

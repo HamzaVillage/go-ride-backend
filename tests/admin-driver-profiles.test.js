@@ -5,7 +5,7 @@ function fixture({enabled=false,missing=false,duplicate=false,activeAdmin=true}=
     const row={id:10,user_id:20,full_name:'Fixture Driver',father_name:'Fixture Father',cnic:'12345-1234567-1',phone:'03001234567',email:'fixture@example.test',city:'Karachi',address:'Fixture address',dob:'1990-01-01',vehicle_type:'mini',vehicle_model:'Alto 2020',vehicle_number:'ABC-123',vehicle_color:'White',join_date:'2026-01-01',status:'pending',Is_Available:1,Is_Online:0,rating:4,completed_rides_count:10,updated_at:'2026-11-06 10:00:00',password:'never-return',JazzCash:'never-return',photo_path:'old-photo.png',cnic_front_path:missing?null:'old-front.png',cnic_back_path:'old-back.png',license_path:'old-license.png'};
     const state={calls:0,writes:[],released:0,rolledBack:0,committed:0};let backup;
     const pool={async getConnection(){state.calls++;return {async beginTransaction(){backup={...row};},async commit(){state.committed++;},async rollback(){Object.assign(row,backup);state.rolledBack++;},release(){state.released++;},async query(sql,args){
-        if(sql.includes('FROM users'))return [activeAdmin?[{User_ID_Pk:7}]:[]];
+        if(sql.includes('FROM employee WHERE'))return [activeAdmin?[{emp_id:7,account_type:'superadmin',is_active:1,is_deleted:0}]:[]];
         if(sql.startsWith('SELECT id FROM drivers'))return [duplicate?[{id:99}]:[]];
         if(sql.startsWith('SELECT'))return [[{...row}]];
         if(sql.startsWith('UPDATE drivers')){state.writes.push({sql,args});const names=[...sql.matchAll(/(?:SET |, )(\w+) = \?/g)].map(match=>match[1]);names.forEach((key,index)=>{row[key]=key==='status'?args[index].toLowerCase():args[index];});return [{affectedRows:1}];}
@@ -38,12 +38,12 @@ test('invalid or protected fields are rejected before DB updates',()=>{
 });
 test('duplicate phones and revoked admin access cannot change a profile',async()=>{
     const duplicate=fixture({enabled:true,duplicate:true});await assert.rejects(duplicate.service.update(10,7,{version:versionOf(duplicate.row),changes:{phone:'03009999999'}}),{status:409});assert.equal(duplicate.state.writes.length,0);
-    const revoked=fixture({enabled:true,activeAdmin:false});await assert.rejects(revoked.service.update(10,7,{version:versionOf(revoked.row),changes:{city:'Lahore'}}),{status:403});assert.equal(revoked.state.writes.length,0);
+    const revoked=fixture({enabled:true,activeAdmin:false});await assert.rejects(revoked.service.update(10,7,{version:versionOf(revoked.row),changes:{city:'Lahore'}}),{status:401});assert.equal(revoked.state.writes.length,0);
 });
-test('HTTP profile and upload writes are blocked before parsing files or acquiring DB',async t=>{
+test('HTTP profile and upload writes are blocked before parsing files or acquiring profile data',async t=>{
     const oldSecret=process.env.JWT_SECRET,oldFlag=process.env.ADMIN_DRIVER_PROFILE_WRITES_ENABLED;process.env.JWT_SECRET='fixture-profile-secret';delete process.env.ADMIN_DRIVER_PROFILE_WRITES_ENABLED;
     t.after(()=>{if(oldSecret===undefined)delete process.env.JWT_SECRET;else process.env.JWT_SECRET=oldSecret;if(oldFlag===undefined)delete process.env.ADMIN_DRIVER_PROFILE_WRITES_ENABLED;else process.env.ADMIN_DRIVER_PROFILE_WRITES_ENABLED=oldFlag;});
-    let calls=0;const app=express();app.use(express.json());app.use('/admin',createAdminRouter({getConnection(){calls++;throw new Error('Live DB must never be accessed');}}));const server=app.listen(0,'127.0.0.1');t.after(()=>new Promise(resolve=>server.close(resolve)));await once(server,'listening');const token=jwt.sign({userId:7,role:'admin'},process.env.JWT_SECRET);const base=`http://127.0.0.1:${server.address().port}`;
+    let calls=0;const app=express();app.use(express.json());app.use('/admin',createAdminRouter({async getConnection(){calls++;return {release(){},async query(sql){assert.match(sql,/SELECT emp_id, account_type, is_active/);return [[{emp_id:7,account_type:'superadmin',is_active:1,is_deleted:0}]];}};}}));const server=app.listen(0,'127.0.0.1');t.after(()=>new Promise(resolve=>server.close(resolve)));await once(server,'listening');const token=jwt.sign({employeeId:7,auth_type:'staff',role:'admin'},process.env.JWT_SECRET);const base=`http://127.0.0.1:${server.address().port}`;
     for(const [method,url] of [['PATCH','/admin/drivers/10/profile'],['POST','/admin/drivers/10/documents/photo']]){const response=await fetch(base+url,{method,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:'{}'});assert.equal(response.status,423);assert.equal((await response.json()).code,'DRIVER_WRITES_DISABLED');}
-    const denied=await fetch(base+'/admin/drivers/10/profile');assert.equal(denied.status,401);assert.equal(calls,0);
+    const denied=await fetch(base+'/admin/drivers/10/profile');assert.equal(denied.status,401);assert.equal(calls,2);
 });

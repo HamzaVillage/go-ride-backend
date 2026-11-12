@@ -1,7 +1,7 @@
 const { createHash } = require('node:crypto');
-const { fail, enabled: employeeAccessEnabled, getAccess } = require('./employeeAccess');
+const { fail, getAccess } = require('./employeeAccess');
 const { validatePolicy, loadFarePolicy, decimal, scheduleStatus, calculateEstimatedFare } = require('./farePolicy');
-const SERVICE_FLAGS = ['ride_service', 'courier_service', 'food_delivery_service', 'grocery_service', 'fare_increaser'];
+const SERVICE_FLAGS = ['ride_service', 'courier_service', 'food_delivery_service', 'grocery_service', 'city_to_city_service', 'hotel_booking_service', 'car_rental_service', 'fare_increaser'];
 const CONFIG_KEYS = [...SERVICE_FLAGS, 'dispatch_min_radius_km', 'dispatch_radius_km'];
 const RATE_FIELDS = {
     Base_Fare: ['Base fare', 999999.99], Per_Km_Rate: ['Per-km rate', 999999.99], Per_Minute_Rate: ['Per-minute rate', 999999.99],
@@ -37,13 +37,12 @@ async function readSettings(conn, lock = false) {
     if (!services.length) throw fail(404, 'System configuration row 1 is missing.');
     const { policy, editable: policyEditable } = await loadFarePolicy(conn, { lock, withStorage: true });
     const [rates] = await conn.query(`SELECT ${RATE_COLUMNS.join(',')} FROM vehicle_fare_rate ORDER BY Rate_ID_Pk${lock ? ' FOR UPDATE' : ''}`);
-    const configuration = { services: Object.fromEntries(CONFIG_KEYS.map(key => [key, SERVICE_FLAGS.includes(key) ? Boolean(services[0][key]) : Number(services[0][key])])), policy,
+    const configuration = { services: Object.fromEntries(CONFIG_KEYS.map(key => [key, SERVICE_FLAGS.includes(key) ? Number(services[0][key]) === 1 : Number(services[0][key])])), policy,
         rates: rates.map(rate => Object.fromEntries(RATE_COLUMNS.map(key => [key, key === 'Is_Active' ? Boolean(rate[key]) : ['Currency', 'Vehicle_Type'].includes(key) ? rate[key] || 'PKR' : Number(rate[key] ?? 0)]))) };
     return { configuration, version: versionOf(configuration), capabilities: { policy_editable: policyEditable } };
 }
 async function requireSettingsActor(conn, actor) {
-    if (employeeAccessEnabled()) { const access = await getAccess(conn, actor, { lock: true }); if (!access.functions.includes('settings')) throw fail(403, 'Settings access is required.'); }
-    else { const [rows] = await conn.query("SELECT User_ID_Pk FROM users WHERE User_ID_Pk = ? AND LOWER(TRIM(Role)) = 'admin' AND COALESCE(AccountDeleted,0) = 0 LOCK IN SHARE MODE", [actor]); if (!rows.length) throw fail(401, 'An active admin account is required.'); }
+    const access = await getAccess(conn, actor, { lock: true }); if (!access.functions.includes('settings')) throw fail(403, 'Settings access is required.');
 }
 function createAdminSettings(pool) {
     return {

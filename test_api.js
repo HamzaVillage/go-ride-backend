@@ -8,7 +8,7 @@ const axios = require('axios');
         console.log("Response Data:", JSON.stringify(response.data, null, 2));
 
         if (response.data.success && response.data.data) {
-            const fields = ['ride_service', 'courier_service', 'food_delivery_service', 'grocery_service', 'fare_increaser'];
+            const fields = ['ride_service', 'courier_service', 'food_delivery_service', 'grocery_service', 'city_to_city_service', 'hotel_booking_service', 'car_rental_service', 'fare_increaser'];
             const missing = fields.filter(f => response.data.data[f] === undefined);
             if (missing.length === 0) {
                 console.log("✅ All requested fields are present.");

@@ -1,9 +1,10 @@
--- MySQL / MariaDB. Additive migration; existing admin users remain bootstrap administrators.
--- Keep EMPLOYEE_ACCESS_ENABLED=false until all five tables and seeds are installed.
+-- MySQL / MariaDB. Independent employee identities; never inserts or updates users.
+-- Existing installations must use setup:staff-identities to upgrade before this backend runs.
 
 CREATE TABLE IF NOT EXISTS employee (
     emp_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    user_id INT NOT NULL,
+    password_hash VARCHAR(255) NULL,
+    account_type ENUM('employee','superadmin') NOT NULL DEFAULT 'employee',
     name VARCHAR(50) NOT NULL,
     email VARCHAR(100) NOT NULL,
     phone VARCHAR(30) NOT NULL,
@@ -16,18 +17,16 @@ CREATE TABLE IF NOT EXISTS employee (
     other_document VARCHAR(100) NULL,
     version INT UNSIGNED NOT NULL DEFAULT 1,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    created_by INT NULL,
+    created_by BIGINT UNSIGNED NULL,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    updated_by INT NULL,
+    updated_by BIGINT UNSIGNED NULL,
     is_active TINYINT(1) NOT NULL DEFAULT 1,
     is_deleted TINYINT(1) NOT NULL DEFAULT 0,
-    UNIQUE KEY uq_employee_user (user_id),
     UNIQUE KEY uq_employee_email (email),
     UNIQUE KEY uq_employee_cnic (cnic),
     KEY ix_employee_status (is_deleted, is_active, emp_id),
-    CONSTRAINT fk_employee_user FOREIGN KEY (user_id) REFERENCES users(User_ID_Pk),
-    CONSTRAINT fk_employee_creator FOREIGN KEY (created_by) REFERENCES users(User_ID_Pk),
-    CONSTRAINT fk_employee_updater FOREIGN KEY (updated_by) REFERENCES users(User_ID_Pk)
+    CONSTRAINT fk_employee_creator FOREIGN KEY (created_by) REFERENCES employee(emp_id),
+    CONSTRAINT fk_employee_updater FOREIGN KEY (updated_by) REFERENCES employee(emp_id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS employee_role (
@@ -36,15 +35,15 @@ CREATE TABLE IF NOT EXISTS employee_role (
     role_description VARCHAR(1000) NULL,
     version INT UNSIGNED NOT NULL DEFAULT 1,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    created_by INT NULL,
+    created_by BIGINT UNSIGNED NULL,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    updated_by INT NULL,
+    updated_by BIGINT UNSIGNED NULL,
     is_active TINYINT(1) NOT NULL DEFAULT 1,
     is_deleted TINYINT(1) NOT NULL DEFAULT 0,
     UNIQUE KEY uq_employee_role_name (role_name),
     KEY ix_employee_role_status (is_deleted, is_active, role_id),
-    CONSTRAINT fk_employee_role_creator FOREIGN KEY (created_by) REFERENCES users(User_ID_Pk),
-    CONSTRAINT fk_employee_role_updater FOREIGN KEY (updated_by) REFERENCES users(User_ID_Pk)
+    CONSTRAINT fk_employee_role_creator FOREIGN KEY (created_by) REFERENCES employee(emp_id),
+    CONSTRAINT fk_employee_role_updater FOREIGN KEY (updated_by) REFERENCES employee(emp_id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS employee_function (
@@ -53,14 +52,14 @@ CREATE TABLE IF NOT EXISTS employee_function (
     function_code VARCHAR(50) NOT NULL,
     version INT UNSIGNED NOT NULL DEFAULT 1,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    created_by INT NULL,
+    created_by BIGINT UNSIGNED NULL,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    updated_by INT NULL,
+    updated_by BIGINT UNSIGNED NULL,
     is_active TINYINT(1) NOT NULL DEFAULT 1,
     is_deleted TINYINT(1) NOT NULL DEFAULT 0,
     UNIQUE KEY uq_employee_function_code (function_code),
-    CONSTRAINT fk_employee_function_creator FOREIGN KEY (created_by) REFERENCES users(User_ID_Pk),
-    CONSTRAINT fk_employee_function_updater FOREIGN KEY (updated_by) REFERENCES users(User_ID_Pk)
+    CONSTRAINT fk_employee_function_creator FOREIGN KEY (created_by) REFERENCES employee(emp_id),
+    CONSTRAINT fk_employee_function_updater FOREIGN KEY (updated_by) REFERENCES employee(emp_id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS assign_role (
@@ -68,17 +67,17 @@ CREATE TABLE IF NOT EXISTS assign_role (
     emp_id BIGINT UNSIGNED NOT NULL,
     role_id BIGINT UNSIGNED NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    created_by INT NULL,
+    created_by BIGINT UNSIGNED NULL,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    updated_by INT NULL,
+    updated_by BIGINT UNSIGNED NULL,
     is_active TINYINT(1) NOT NULL DEFAULT 1,
     is_deleted TINYINT(1) NOT NULL DEFAULT 0,
     UNIQUE KEY uq_employee_role (emp_id, role_id),
     KEY ix_assign_role_reverse (role_id, is_deleted, is_active, emp_id),
     CONSTRAINT fk_assign_role_employee FOREIGN KEY (emp_id) REFERENCES employee(emp_id),
     CONSTRAINT fk_assign_role_role FOREIGN KEY (role_id) REFERENCES employee_role(role_id),
-    CONSTRAINT fk_assign_role_creator FOREIGN KEY (created_by) REFERENCES users(User_ID_Pk),
-    CONSTRAINT fk_assign_role_updater FOREIGN KEY (updated_by) REFERENCES users(User_ID_Pk)
+    CONSTRAINT fk_assign_role_creator FOREIGN KEY (created_by) REFERENCES employee(emp_id),
+    CONSTRAINT fk_assign_role_updater FOREIGN KEY (updated_by) REFERENCES employee(emp_id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS assign_role_function (
@@ -86,17 +85,17 @@ CREATE TABLE IF NOT EXISTS assign_role_function (
     role_id BIGINT UNSIGNED NOT NULL,
     function_id BIGINT UNSIGNED NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    created_by INT NULL,
+    created_by BIGINT UNSIGNED NULL,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    updated_by INT NULL,
+    updated_by BIGINT UNSIGNED NULL,
     is_active TINYINT(1) NOT NULL DEFAULT 1,
     is_deleted TINYINT(1) NOT NULL DEFAULT 0,
     UNIQUE KEY uq_role_function (role_id, function_id),
     KEY ix_assign_function_reverse (function_id, is_deleted, is_active, role_id),
     CONSTRAINT fk_role_function_role FOREIGN KEY (role_id) REFERENCES employee_role(role_id),
     CONSTRAINT fk_role_function_function FOREIGN KEY (function_id) REFERENCES employee_function(function_id),
-    CONSTRAINT fk_assign_role_function_creator FOREIGN KEY (created_by) REFERENCES users(User_ID_Pk),
-    CONSTRAINT fk_assign_role_function_updater FOREIGN KEY (updated_by) REFERENCES users(User_ID_Pk)
+    CONSTRAINT fk_assign_role_function_creator FOREIGN KEY (created_by) REFERENCES employee(emp_id),
+    CONSTRAINT fk_assign_role_function_updater FOREIGN KEY (updated_by) REFERENCES employee(emp_id)
 ) ENGINE=InnoDB;
 
 -- Stable codes map to registered admin routes. Do not rename deployed codes.

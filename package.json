@@ -11,7 +11,9 @@
     "test": "node --test tests/*.test.js",
     "start": "nodemon Server.js",
     "setup:employee-access": "node scripts/configureEmployeeAccess.js",
-    "setup:admin-settings": "node scripts/configureAdminSettings.js"
+    "setup:admin-settings": "node scripts/configureAdminSettings.js",
+    "setup:staff-identities": "node scripts/separateStaffIdentities.js",
+    "setup:staff-admin": "node scripts/createStaffAdmin.js"
   },
   "keywords": [],
   "dependencies": {

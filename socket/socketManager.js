@@ -36,6 +36,7 @@ function initSocket(server) {
         if (token) {
             try {
                 const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_fallback_secret');
+                if (decoded.auth_type === 'staff') return next(new Error('Staff sessions cannot access mobile sockets.'));
                 socket.user = decoded; // { userId, role, phone }
                 return next();
             } catch (err) {
@@ -87,6 +88,8 @@ function initSocket(server) {
             });
             return;
         }
+
+        require('../services/cityToCityRealtime').registerCityToCityRealtime(socket,pool);
 
         // Separate authorized chat rooms: arbitrary ride:join cannot expose chat.
         socket.on('ride_chat:subscribe', async (data, reply) => {

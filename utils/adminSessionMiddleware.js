@@ -1,11 +1,13 @@
 const jwt = require('jsonwebtoken');
+const maintenance = require('./staffMaintenance');
 module.exports = (req, res, next) => {
+    if (maintenance.active()) return maintenance.middleware(req,res,next);
     const token = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
     if (token && process.env.JWT_SECRET) {
         try {
             const user = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
-            if (['admin', 'employee'].includes(user.role) && Number.isSafeInteger(Number(user.userId)) && Number(user.userId) > 0) {
-                req.user = { ...user, userId: Number(user.userId) };
+            if (user.auth_type === 'staff' && ['admin', 'employee'].includes(user.role) && Number.isSafeInteger(Number(user.employeeId)) && Number(user.employeeId) > 0) {
+                req.user = { ...user, employeeId: Number(user.employeeId) };
                 return next();
             }
         } catch { /* Reject invalid and expired tokens. */ }

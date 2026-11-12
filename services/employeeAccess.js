@@ -4,18 +4,20 @@ const SCREENS = Object.freeze([
     ['reports', 'Chat reports', '/reports'], ['support', 'Support queries', '/support'],
     ['notifications', 'Notifications', '/notifications'], ['settings', 'Settings', '/settings'],
     ['employees', 'Employee access', '/employees'],
+    ['city_to_city_drivers','City-to-City Drivers','/drivers/city-to-city'],
+    ['city_to_city_fares','City-to-City Service & Fares','/city-to-city/fares'],
+    ['city_to_city_routes','City-to-City Route Fares','/city-to-city/routes'],
+    ['city_to_city_calculator','City-to-City Fare Calculator','/city-to-city/calculator'],
+    ['franchise_members','Franchise Drivers & Riders','/franchise-members'],
 ]);
-const enabled = () => process.env.EMPLOYEE_ACCESS_ENABLED === 'true';
 const fail = (status, message) => Object.assign(new Error(message), { status });
-async function getAccess(conn, userId, { lock = false } = {}) {
+async function getAccess(conn, employeeId, { lock = false } = {}) {
     const locking = lock ? ' LOCK IN SHARE MODE' : '';
-    const [accounts] = await conn.query("SELECT User_ID_Pk, Role FROM users WHERE User_ID_Pk = ? AND LOWER(TRIM(Role)) IN ('admin', 'employee') AND COALESCE(AccountDeleted,0) = 0" + locking, [userId]);
-    if (!accounts.length) throw fail(401, 'This admin account is no longer available.');
-    const [employees] = await conn.query('SELECT emp_id, is_active, is_deleted FROM employee WHERE user_id = ?' + locking, [userId]);
-    if (!employees.length && String(accounts[0].Role).trim().toLowerCase() !== 'admin') throw fail(401, 'Employee profile is unavailable.');
-    if (!employees.length) return { is_super_admin: true, employee_id: null, functions: SCREENS.map(([code]) => code) };
+    const [employees] = await conn.query('SELECT emp_id, account_type, is_active, is_deleted FROM employee WHERE emp_id = ?' + locking, [employeeId]);
     const employee = employees[0];
-    if (!employee.is_active || employee.is_deleted) throw fail(401, 'This employee account is inactive. Contact your administrator.');
+    if (!employee || !Number(employee.is_active) || Number(employee.is_deleted)) throw fail(401, 'This employee account is inactive or unavailable.');
+    if (employee.account_type === 'superadmin') return { is_super_admin: true, employee_id: Number(employee.emp_id), functions: SCREENS.map(([code]) => code) };
+    if (employee.account_type !== 'employee') throw fail(401, 'Invalid employee account type.');
     const [functions] = await conn.query(`SELECT DISTINCT f.function_code FROM assign_role a
         JOIN employee_role r ON r.role_id = a.role_id AND r.is_active = 1 AND r.is_deleted = 0
         JOIN assign_role_function af ON af.role_id = r.role_id AND af.is_active = 1 AND af.is_deleted = 0
@@ -25,16 +27,10 @@ async function getAccess(conn, userId, { lock = false } = {}) {
 }
 function createAccessMiddleware(pool, screen) {
     return async (req, res, next) => {
-        if (!enabled()) {
-            if (req.user.role === 'employee') return res.status(401).json({ success: false, message: 'Employee access is not enabled.' });
-            if (screen === 'employees') return res.status(503).json({ success: false, message: 'Apply the employee-access migration and enable EMPLOYEE_ACCESS_ENABLED first.' });
-            req.access = { is_super_admin: true, employee_id: null, functions: SCREENS.map(([code]) => code) };
-            return next();
-        }
         let conn;
         try {
             conn = await pool.getConnection();
-            req.access = await getAccess(conn, req.user.userId);
+            req.access = await getAccess(conn, req.user.employeeId);
             if (screen && !req.access.functions.includes(screen)) throw fail(403, 'Your roles do not allow access to this screen.');
             next();
         } catch (error) {
@@ -48,8 +44,7 @@ function createAccessMiddleware(pool, screen) {
 function withScreenAccess(legacyMiddleware, screen) {
     return (req, res, next) => legacyMiddleware(req, res, () => {
         if (!req.user) return next();
-        if (!enabled() && req.user.role !== 'employee') return next();
         return createAccessMiddleware(require('../db/Connect_Db'), screen)(req, res, next);
     });
 }
-module.exports = { SCREENS, enabled, fail, getAccess, createAccessMiddleware, withScreenAccess };
+module.exports = { SCREENS, fail, getAccess, createAccessMiddleware, withScreenAccess };

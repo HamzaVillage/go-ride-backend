@@ -36,7 +36,7 @@ const adminAuthMiddleware = (req, res, next) => {
                 if (!process.env.JWT_SECRET) throw new Error('Admin JWT signing key is not configured.');
                 const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
                 const role = (decoded.role || decoded.Role || decoded.user_type || '').toLowerCase();
-                if (role === 'admin' || role === 'employee' || role === 'superadmin' || decoded.isAdmin === true) {
+                if (decoded.auth_type === 'staff' && Number.isSafeInteger(decoded.employeeId) && decoded.employeeId > 0 && ['admin', 'employee'].includes(role)) {
                     req.user = decoded;
                     req.isAdmin = true;
                     return next();

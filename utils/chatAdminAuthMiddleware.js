@@ -14,7 +14,7 @@ module.exports = (req, res, next) => {
     if (process.env.JWT_SECRET && bearer) {
         try {
             const user = jwt.verify(bearer, process.env.JWT_SECRET);
-            if (['admin', 'superadmin', 'employee'].includes(String(user.role || '').toLowerCase()) || user.isAdmin === true) {
+            if (user.auth_type === 'staff' && Number.isSafeInteger(user.employeeId) && user.employeeId > 0 && ['admin', 'employee'].includes(user.role)) {
                 req.user = user;
                 return next();
             }

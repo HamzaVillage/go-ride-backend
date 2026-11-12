@@ -10,7 +10,7 @@ const chatAdmin = require('../utils/chatAdminAuthMiddleware');
 const notificationAdmin = require('../utils/adminAuthMiddleware');
 const secret = 'test-only-admin-login-signing-secret';
 const password = 'correct-test-password';
-const user = { User_ID_Pk: 7, User_Name: 'Test Admin', Email: 'admin@example.com', Role: 'admin', AccountDeleted: 0, Password: bcrypt.hashSync(password, 10) };
+const user = { emp_id: 7, name: 'Test Admin', email: 'admin@example.com', account_type: 'superadmin', is_active:1, is_deleted:0, password_hash: bcrypt.hashSync(password, 10) };
 const credentials = { email: 'admin@example.com', password, security_code: '0000' };
 function fixture({ rows = [user], secretValue = secret, failure } = {}) {
     let released = false; const queries = [];
@@ -25,24 +25,24 @@ test('admin email/password/0000 login returns an eight-hour admin JWT with safe 
     const f = fixture(); const res = await invoke(f, { ...credentials, email:' Admin@Example.COM ' });
     assert.equal(res.statusCode, 200); assert.equal(res.body.success, true);
     const decoded = jwt.verify(res.body.token, secret, { algorithms:['HS256'] });
-    assert.equal(decoded.role, 'admin'); assert.equal(decoded.userId, 7);
+    assert.equal(decoded.role, 'admin'); assert.equal(decoded.auth_type,'staff'); assert.equal(decoded.userId,undefined); assert.equal(decoded.employeeId, 7);
     assert.equal(decoded.exp - decoded.iat, SESSION_SECONDS); assert.equal(res.body.expiresAt, decoded.exp * 1000);
     assert.deepEqual(res.body.user, { id:7, name:'Test Admin', email:'admin@example.com', role:'admin' });
     assert.equal(res.body.Password, undefined); assert.equal(res.body.user.Password, undefined);
-    assert.deepEqual(f.queries[0].params, ['admin@example.com']); assert.match(f.queries[0].sql, /LOWER\(TRIM\(Role\)\) = 'admin'/);
+    assert.deepEqual(f.queries[0].params, ['admin@example.com']); assert.match(f.queries[0].sql, /FROM employee/); assert.ok(f.queries.every(q=>!q.sql.includes('FROM users')));
     assert.match(res.headers['Cache-Control'], /no-store/); assert.equal(f.released, true);
 });
 for (const [name, rows, body] of [
     ['wrong password', [user], { ...credentials, password:'wrong' }],
     ['wrong four-digit code', [user], { ...credentials, security_code:'1234' }],
     ['missing account', [], credentials],
-    ['rider role', [{...user,Role:'rider'}], credentials],
-    ['driver role', [{...user,Role:'driver'}], credentials],
-    ['superadmin role', [{...user,Role:'superadmin'}], credentials],
-    ['deleted account', [{...user,AccountDeleted:1}], credentials],
+    ['rider role', [{...user,account_type:'rider'}], credentials],
+    ['driver role', [{...user,account_type:'driver'}], credentials],
+    ['superadmin role', [{...user,account_type:'invalid'}], credentials],
+    ['deleted account', [{...user,is_deleted:1}], credentials],
     ['duplicate admin email', [user,user], credentials],
-    ['missing hash', [{...user,Password:null}], credentials],
-    ['plaintext password', [{...user,Password:password}], credentials],
+    ['missing hash', [{...user,password_hash:null}], credentials],
+    ['plaintext password', [{...user,password_hash:password}], credentials],
 ]) test(`admin login denies ${name}`, async () => {
     const f = fixture({rows}); const res = await invoke(f, body);
     assert.equal(res.statusCode, 401); assert.equal(res.body.token, undefined);
@@ -75,6 +75,7 @@ test('issued admin JWT authorizes both reports and notifications', async () => {
     } finally { if (oldSecret === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = oldSecret; }
 });
 test('HTTP endpoint blocks repeated failures and returns Retry-After', async t => {
+    const oldEnv=process.env.NODE_ENV;process.env.NODE_ENV='production';t.after(()=>oldEnv===undefined?delete process.env.NODE_ENV:process.env.NODE_ENV=oldEnv);
     const app = express(); app.use(express.json()); app.post('/auth/admin-login', createLimiter(), fixture({rows:[]}).handler);
     const server = app.listen(0, '127.0.0.1'); t.after(() => new Promise(resolve => server.close(resolve))); await once(server,'listening');
     const url = `http://127.0.0.1:${server.address().port}/auth/admin-login`;
@@ -85,4 +86,21 @@ test('HTTP endpoint blocks repeated failures and returns Retry-After', async t =
     const blocked = await fetch(url, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(credentials)});
     assert.equal(blocked.status,429); assert.ok(Number(blocked.headers.get('retry-after')) > 0);
     assert.equal((await blocked.json()).success,false);
+});
+
+
+test('direct local development retries do not lock out while proxied and production logins remain protected', async t => {
+    const oldBypass=process.env.ADMIN_LOCAL_LOGIN_BYPASS, oldEnv=process.env.NODE_ENV;
+    process.env.ADMIN_LOCAL_LOGIN_BYPASS='true';process.env.NODE_ENV='development';
+    t.after(()=>{if(oldBypass===undefined)delete process.env.ADMIN_LOCAL_LOGIN_BYPASS;else process.env.ADMIN_LOCAL_LOGIN_BYPASS=oldBypass;if(oldEnv===undefined)delete process.env.NODE_ENV;else process.env.NODE_ENV=oldEnv;});
+    const {isDirectLocalDevelopment}=require('../utils/adminLoginLimiter');
+    const local={socket:{remoteAddress:'127.0.0.1'},headers:{host:'localhost:4000'}};
+    assert.equal(isDirectLocalDevelopment(local),true);
+    for(const key of ['x-forwarded-for','x-forwarded-host','forwarded','x-real-ip'])assert.equal(isDirectLocalDevelopment({...local,headers:{...local.headers,[key]:'external'}}),false);
+    assert.equal(isDirectLocalDevelopment({...local,socket:{remoteAddress:'192.0.2.5'}}),false);
+    assert.equal(isDirectLocalDevelopment({...local,headers:{host:'public.example.com'}}),false);
+    process.env.NODE_ENV='production';assert.equal(isDirectLocalDevelopment(local),false);process.env.NODE_ENV='development';
+    const app=express();app.use(express.json());app.post('/auth/admin-login',createLimiter(),fixture({rows:[]}).handler);
+    const server=app.listen(0,'127.0.0.1');t.after(()=>new Promise(resolve=>server.close(resolve)));await once(server,'listening');
+    for(let i=0;i<12;i++){const res=await fetch(`http://127.0.0.1:${server.address().port}/auth/admin-login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(credentials)});assert.equal(res.status,401);await res.json();}
 });

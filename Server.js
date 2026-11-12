@@ -20,6 +20,7 @@ const notificationRoutes = require('./routers/notification');
 const paymentRoutes = require('./routers/payment');
 const walletRoutes = require('./routers/wallet');
 const { createAdminRouter } = require('./routers/admin');
+const { createCityToCityRouter } = require('./routers/cityToCity');
 const { createWalletTables } = require('./create_wallet_tables');
 
 const app = express();
@@ -74,6 +75,7 @@ app.use("/notification", notificationRoutes);
 app.use("/payment", paymentRoutes);
 app.use("/wallet", walletRoutes);
 app.use("/admin", createAdminRouter(Connect_Db));
+app.use('/city-to-city', createCityToCityRouter(Connect_Db));
 
 
 // Start server

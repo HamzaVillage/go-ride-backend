@@ -1,4 +1,4 @@
-const { enabled: employeeAccessEnabled, getAccess } = require('./employeeAccess');
+const { getAccess } = require('./employeeAccess');
 const { DOCUMENTS } = require('./adminDriverProfiles');
 const { formatDriverCode, getDriverWalletBalance } = require('../utils/driverHelper');
 const STATUSES = ['unverified', 'pending', 'active', 'inactive', 'blocked'];
@@ -67,7 +67,7 @@ function createAdminDriversService(pool) {
                 const [drivers] = await conn.query(`SELECT ${columns} FROM drivers d WHERE d.id = ?`, [driverId]);
                 if (!drivers.length) throw fail(404, 'Driver not found.');
                 const [count] = await conn.query('SELECT COUNT(*) AS total FROM driver_wallet WHERE driver_id = ?', [driverId]);
-                const [transactions] = await conn.query(`SELECT id, transaction_type, amount, description, reference_id, payment_method, status, created_at, created_by
+                const [transactions] = await conn.query(`SELECT id, transaction_type, amount, description, reference_id, payment_method, status, created_at, created_by_employee_id AS created_by
                     FROM driver_wallet WHERE driver_id = ? ORDER BY id DESC LIMIT ? OFFSET ?`, [driverId, limit, offset]);
                 return { driver: normalizeDriver(drivers[0]), transactions: transactions.map(normalizeTxn), pagination: {page, limit, total:Number(count[0].total), totalPages:Math.ceil(Number(count[0].total)/limit)} };
             } finally { if (conn) conn.release(); }
@@ -84,13 +84,11 @@ function createAdminDriversService(pool) {
             let conn; let started = false;
             try {
                 conn = await pool.getConnection(); await conn.beginTransaction(); started = true;
-                const [admins] = await conn.query("SELECT User_ID_Pk FROM users WHERE User_ID_Pk = ? AND LOWER(TRIM(Role)) IN ('admin', 'employee') AND COALESCE(AccountDeleted, 0) = 0 LOCK IN SHARE MODE", [actor]);
-                if (!admins.length) throw fail(403, 'An active admin account is required.');
-                if (employeeAccessEnabled()) { const access = await getAccess(conn, actor, { lock: true }); if (!access.functions.includes('drivers')) throw fail(403, 'Driver screen access is required.'); }
+            const access = await getAccess(conn, actor, { lock: true }); if (!access.functions.includes('drivers')) throw fail(403, 'Driver screen access is required.');
                 // Serialize all top-ups for this driver, including simultaneous retries.
                 const [drivers] = await conn.query('SELECT id FROM drivers WHERE id = ? FOR UPDATE', [driverId]);
                 if (!drivers.length) throw fail(404, 'Driver not found.');
-                const [existing] = await conn.query(`SELECT id, amount, transaction_type, status, payment_method, description, created_by, reference_id
+                const [existing] = await conn.query(`SELECT id, amount, transaction_type, status, payment_method, description, created_by_employee_id AS created_by, reference_id
                     FROM driver_wallet WHERE driver_id = ? AND reference_id = ? LIMIT 2 FOR UPDATE`, [driverId, reference]);
                 let transactionId; let duplicate = false;
                 if (existing.length) {
@@ -101,7 +99,7 @@ function createAdminDriversService(pool) {
                     transactionId = previous.id; duplicate = true;
                 } else {
                     const [inserted] = await conn.query(`INSERT INTO driver_wallet
-                        (driver_id, transaction_type, amount, description, reference_id, payment_method, status, created_by, created_at)
+                        (driver_id, transaction_type, amount, description, reference_id, payment_method, status, created_by_employee_id, created_at)
                         VALUES (?, 'credit', ?, ?, ?, ?, 'completed', ?, NOW())`, [driverId, amount, description, reference, body.payment_method, actor]);
                     transactionId = inserted.insertId;
                 }

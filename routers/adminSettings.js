@@ -11,14 +11,14 @@ function createSettingsRouter(pool, { backup = createDatabaseBackup({ pool }) } 
     const respond = handler => async (req, res) => { try { res.json({ success: true, data: await handler(req) }); } catch (err) { error(res, err); } };
     const rootOnly = async (req, res, next) => {
         try {
-            if (!req.access?.is_super_admin || req.user.role !== 'admin') return res.status(403).json({ success: false, message: 'Whole-database backups require a bootstrap administrator.' });
-            const [rows] = await pool.query("SELECT User_ID_Pk FROM users WHERE User_ID_Pk = ? AND LOWER(TRIM(Role)) = 'admin' AND COALESCE(AccountDeleted,0) = 0", [req.user.userId]);
+            if (!req.access?.is_super_admin || req.user.role !== 'admin') return res.status(403).json({ success: false, message: 'Whole-database backups require a super administrator.' });
+            const [rows] = await pool.query("SELECT emp_id FROM employee WHERE emp_id = ? AND account_type = 'superadmin' AND is_active = 1 AND is_deleted = 0", [req.user.employeeId]);
             if (!rows.length) return res.status(401).json({ success: false, message: 'An active administrator is required.' });
             next();
         } catch (err) { error(res, err); }
     };
     router.get('/', respond(() => settings.get()));
-    router.patch('/', respond(req => settings.update(req.user.userId, req.body)));
+    router.patch('/', respond(req => settings.update(req.user.employeeId, req.body)));
     router.post('/fare-preview', respond(req => settings.preview(req.body)));
     router.get('/backup/status', rootOnly, respond(() => backup.status()));
     router.post('/backup', rootOnly, async (req, res) => {
@@ -29,7 +29,7 @@ function createSettingsRouter(pool, { backup = createDatabaseBackup({ pool }) } 
         try {
             file = await backup.generate({ signal: controller.signal });
             if (controller.signal.aborted) return;
-            console.info('Database backup prepared', { adminId: req.user.userId, bytes: file.size, snapshotMode: file.snapshot_mode });
+            console.info('Database backup prepared', { adminId: req.user.employeeId, bytes: file.size, snapshotMode: file.snapshot_mode });
             res.set({ 'Content-Type': 'application/gzip', 'Content-Length': String(file.size), 'X-Content-Type-Options': 'nosniff', 'X-Accel-Buffering': 'no', 'Access-Control-Expose-Headers': 'Content-Disposition, Content-Length' });
             await new Promise((resolve, reject) => res.download(file.filePath, file.filename, err => err ? reject(err) : resolve()));
         } catch (err) { if (!controller.signal.aborted) error(res, err); }
