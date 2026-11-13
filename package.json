@@ -15,7 +15,9 @@
     "setup:staff-identities": "node scripts/separateStaffIdentities.js",
     "setup:staff-admin": "node scripts/createStaffAdmin.js",
     "setup:city-to-city-wallet": "node scripts/configureCityToCityWallet.js",
-    "setup:mobile-auth": "node scripts/configureMobileAuth.js"
+    "setup:mobile-auth": "node scripts/configureMobileAuth.js",
+    "audit:driver-user-links": "node scripts/auditDriverUserLinks.js",
+    "setup:driver-user-links": "node scripts/configureDriverUserLinks.js"
   },
   "keywords": [],
   "dependencies": {

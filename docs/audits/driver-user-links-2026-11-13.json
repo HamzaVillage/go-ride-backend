@@ -1,0 +1,130 @@
+{
+  "normal_profiles": 196,
+  "city_profiles": 2,
+  "normal_issues": [
+    {
+      "driver_id": 16,
+      "current_user_id": 1,
+      "reasons": [
+        "phone_mismatch",
+        "shared_user_id"
+      ],
+      "phone_matching_user_ids": [
+        631
+      ]
+    },
+    {
+      "driver_id": 45,
+      "current_user_id": 1,
+      "reasons": [
+        "phone_mismatch",
+        "shared_user_id"
+      ],
+      "phone_matching_user_ids": [
+        980
+      ]
+    },
+    {
+      "driver_id": 51,
+      "current_user_id": 1,
+      "reasons": [
+        "phone_mismatch",
+        "shared_user_id"
+      ],
+      "phone_matching_user_ids": [
+        781
+      ]
+    },
+    {
+      "driver_id": 52,
+      "current_user_id": 1,
+      "reasons": [
+        "phone_mismatch",
+        "shared_user_id"
+      ],
+      "phone_matching_user_ids": [
+        1000
+      ]
+    },
+    {
+      "driver_id": 53,
+      "current_user_id": 1,
+      "reasons": [
+        "phone_mismatch",
+        "shared_user_id"
+      ],
+      "phone_matching_user_ids": [
+        1003
+      ]
+    },
+    {
+      "driver_id": 54,
+      "current_user_id": 1,
+      "reasons": [
+        "phone_mismatch",
+        "shared_user_id"
+      ],
+      "phone_matching_user_ids": [
+        1004
+      ]
+    },
+    {
+      "driver_id": 58,
+      "current_user_id": 1,
+      "reasons": [
+        "phone_mismatch",
+        "shared_user_id"
+      ],
+      "phone_matching_user_ids": [
+        1013
+      ]
+    },
+    {
+      "driver_id": 62,
+      "current_user_id": 1,
+      "reasons": [
+        "phone_mismatch",
+        "shared_user_id"
+      ],
+      "phone_matching_user_ids": [
+        1033
+      ]
+    },
+    {
+      "driver_id": 84,
+      "current_user_id": 1194,
+      "reasons": [
+        "invalid_phone_format"
+      ],
+      "phone_matching_user_ids": []
+    },
+    {
+      "driver_id": 88,
+      "current_user_id": 1202,
+      "reasons": [
+        "invalid_phone_format"
+      ],
+      "phone_matching_user_ids": []
+    },
+    {
+      "driver_id": 94,
+      "current_user_id": 1214,
+      "reasons": [
+        "invalid_phone_format"
+      ],
+      "phone_matching_user_ids": []
+    },
+    {
+      "driver_id": 248,
+      "current_user_id": 1,
+      "reasons": [
+        "shared_user_id"
+      ],
+      "phone_matching_user_ids": [
+        1
+      ]
+    }
+  ],
+  "city_issues": [],
+  "read_only": true
+}

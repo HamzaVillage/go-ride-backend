@@ -6,6 +6,8 @@ function fixture({enabled=false,missing=false,duplicate=false,activeAdmin=true}=
     const state={calls:0,writes:[],released:0,rolledBack:0,committed:0};let backup;
     const pool={async getConnection(){state.calls++;return {async beginTransaction(){backup={...row};},async commit(){state.committed++;},async rollback(){Object.assign(row,backup);state.rolledBack++;},release(){state.released++;},async query(sql,args){
         if(sql.includes('FROM employee WHERE'))return [activeAdmin?[{emp_id:7,account_type:'superadmin',is_active:1,is_deleted:0}]:[]];
+        if(sql.includes('FROM users WHERE User_ID_Pk=?'))return [[{User_ID_Pk:20,Mobile:'03001234567',Role:'rider',AccountDeleted:0}]];
+        if(sql==='SELECT id FROM drivers WHERE User_ID_FK=? LIMIT 2')return [[{id:10}]];
         if(sql.startsWith('SELECT id FROM drivers'))return [duplicate?[{id:99}]:[]];
         if(sql.startsWith('SELECT'))return [[{...row}]];
         if(sql.startsWith('UPDATE drivers')){state.writes.push({sql,args});const names=[...sql.matchAll(/(?:SET |, )(\w+) = \?/g)].map(match=>match[1]);names.forEach((key,index)=>{row[key]=key==='status'?args[index].toLowerCase():args[index];});return [{affectedRows:1}];}

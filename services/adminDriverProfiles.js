@@ -1,4 +1,5 @@
 const { getAccess } = require('./employeeAccess');
+const {assertDriverUserLink}=require('./driverUserLink');
 const crypto = require('node:crypto');
 const {formatDriverCode} = require('../utils/driverHelper');
 const fail = (status,message,code) => Object.assign(new Error(message),{status,code});
@@ -71,6 +72,7 @@ function createAdminDriverProfiles(pool,{enabled=writesEnabled}={}) {
             const changes=validateChanges(body.changes);
             return mutate(id,actor,body.version,async(conn,row,driverId)=>{
                 const next={...row,...changes};
+                if(changes.status?.toLowerCase()==='active'||changes.phone)await assertDriverUserLink(conn,next);
                 if(changes.status?.toLowerCase()==='active'&&row.status?.toLowerCase()!=='active'){
                     const missing=approvalMissing(next);if(missing.length)throw fail(400,`Complete these items before approving: ${missing.join(', ')}.`);
                 }
