@@ -38,6 +38,10 @@ function createCityToCityRouter(pool) {
     }));
     router.use(auth);
     router.use(async (req,res,next) => { try { req.user=await resolveCityToCityIdentity(pool,req.user); next(); } catch(error) { sendError(res,error); } });
+    const wallet = require('../services/cityToCityWallet').createCityToCityWallet(pool);
+    router.get('/driver/wallet/eligibility',respond(req=>wallet.eligibility(req.user.userId)));
+    router.get('/driver/wallet',respond(req=>wallet.mine(req.user.userId,req.query)));
+    router.post('/driver/wallet/topups',respond(req=>wallet.submit(req.user.userId,req.body)));
     router.post('/quotes',respond(req=>dispatch.quotes(req.user.userId,req.body)));
     router.post('/quote',respond(req=>dispatch.quote(req.user.userId,req.body)));
     router.post('/requests',respond(async req=>{const result=await dispatch.create(req.user.userId,req.body);await publishRequest(pool,result.id);return result;}));

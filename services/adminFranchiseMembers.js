@@ -132,7 +132,7 @@ function createAdminFranchiseMembers(pool) {
         .createHash("sha256")
         .update(JSON.stringify([body.kind, body.franchise_id, data]))
         .digest("hex");
-      const lockName = `franchise-member:${data.phone}`;
+      const lockName = `app-user-phone:${data.phone}`;
       try {
         const [locks] = await conn.query("SELECT GET_LOCK(?,10) AS acquired", [
           lockName,

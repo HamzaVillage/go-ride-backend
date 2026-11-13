@@ -1,0 +1,5 @@
+const fs=require('node:fs/promises'),path=require('node:path');
+async function main(){const file=path.join(__dirname,'../db/migrations/add_city_to_city_wallet.sql');if(!process.argv.includes('--apply')){console.log(`Review ${file}; --apply installs only City-to-City wallet tables.`);return;}
+const p=require('../db/Connect_Db');try{for(const table of ['city_to_city_drivers','city_to_city_services','city_to_city_trips','city_to_city_bookings']){const [r]=await p.query('SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=?',[table]);if(r[0]?.ENGINE!=='InnoDB')throw new Error(`${table} requires InnoDB`);}
+const sql=(await fs.readFile(file,'utf8')).replace(/^\s*--.*$/gm,'');for(const statement of sql.split(';').map(s=>s.trim()).filter(Boolean))await p.query(statement);console.log('City-to-City wallet tables installed. Normal wallet tables and all balances were preserved.');}finally{await p.end();}}
+main().catch(e=>{console.error('City-to-City wallet setup failed:',e.code||e.message);process.exitCode=1;});

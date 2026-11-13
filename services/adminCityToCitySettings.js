@@ -2,6 +2,8 @@ const crypto = require("node:crypto");
 const { getAccess, fail } = require("./employeeAccess");
 const { calculateCityFare } = require("./cityToCityPricing");
 const numericFields = {
+  minimum_topup_amount: [0, 99999999.99],
+  minimum_required_balance: [0, 99999999.99],
   base_fare: [0, 99999999.99],
   per_km_rate: [0, 99999999.99],
   per_minute_rate: [0, 99999999.99],
@@ -48,6 +50,8 @@ const serviceFields = [
 const routeFields = serviceFields.filter(
   (k) =>
     ![
+      "minimum_topup_amount",
+      "minimum_required_balance",
       "min_passengers",
       "max_passengers",
       "max_parcel_weight_kg",

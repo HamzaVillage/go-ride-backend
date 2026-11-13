@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const axios = require('axios');
 const FormData = require('form-data');
+const {USER_PHONE_SQL,phoneArgs,acquirePhoneLock,releasePhoneLock}=require('../services/appUserIdentity');
 const { formatDriverCode } = require('../utils/driverHelper');
 
 const REVIEW_NUMBERS = ['03112032255', '03112032256'];
@@ -77,7 +78,7 @@ const authController = {
         const { phone_number, otp } = req.body;
         if (!phone_number || !otp) return res.status(400).json({ success: false, message: "Phone number and OTP are required" });
 
-        let conn;
+        let conn, phoneLock;
         try {
             conn = await pool.getConnection();
             const normalizedPhone = phone_number.replace(/-/g, '');
@@ -93,10 +94,13 @@ const authController = {
                 return res.status(400).json({ success: false, message: "Invalid OTP" });
             }
 
+            if(otpData.purpose==='register')phoneLock=await acquirePhoneLock(conn,normalizedPhone);
             await conn.beginTransaction();
 
             let user;
             if (otpData.purpose === 'register') {
+                const [existingAccount]=await conn.query(`SELECT User_ID_Pk FROM users WHERE ${USER_PHONE_SQL} LIMIT 2 FOR UPDATE`,phoneArgs(normalizedPhone));
+                if(existingAccount.length)throw Object.assign(new Error('This phone already has an account. Please sign in.'),{status:409});
                 const payload = JSON.parse(otpData.payload);
                 const uniqueId = crypto.randomBytes(16).toString('hex');
 
@@ -169,9 +173,9 @@ const authController = {
         } catch (err) {
             if (conn) await conn.rollback();
             console.error("Verify OTP Error:", err);
-            res.status(500).json({ success: false, message: "Error verifying OTP", error: err.message });
+            res.status(err.status||500).json({success:false,message:err.status?err.message:"Error verifying OTP"});
         } finally {
-            if (conn) conn.release();
+            if(conn){await releasePhoneLock(conn,phoneLock);conn.release();}
         }
     },
 
@@ -392,7 +396,7 @@ const authController = {
         const { phone, otp } = req.body;
         if (!phone || !otp) return res.status(400).json({ success: false, message: "Phone and OTP are required" });
 
-        let conn;
+        let conn,phoneLock;
         try {
             conn = await pool.getConnection();
             // Normalize input phone by removing any dashes
@@ -444,27 +448,23 @@ const authController = {
 
             const driver = driverRows[0];
 
-            // Optional: Ensure user exists in users table for consistent JWT/Auth
-            const [userRows] = await conn.query(
-                "SELECT * FROM users WHERE User_ID_Pk = ? OR (REPLACE(Mobile, '-', '') = ? AND Role = 'driver')",
-                [driver.User_ID_FK || 0, normalizedPhone]
-            );
+            phoneLock=await acquirePhoneLock(conn,normalizedPhone);
+            await conn.beginTransaction();
+            const [userRows]=await conn.query(`SELECT User_ID_Pk,Mobile,Role,AccountDeleted FROM users WHERE ${USER_PHONE_SQL} LIMIT 2 FOR UPDATE`,phoneArgs(normalizedPhone));
+            if(userRows.length>1)throw Object.assign(new Error('Multiple accounts use this phone. Contact support.'),{status:409});
             let userId;
-            if (userRows.length === 0) {
-                // Create user if not exists
-                const uniqueId = crypto.randomBytes(16).toString('hex');
-                const [userResult] = await conn.query(
-                    "INSERT INTO users (User_Name, Email, Mobile, Role, Unique_ID) VALUES (?, ?, ?, ?, ?)",
-                    [driver.full_name, driver.email || '', phone, 'driver', uniqueId]
-                );
-                userId = userResult.insertId;
-            } else {
-                userId = userRows[0].User_ID_Pk;
+            if(userRows.length){const owner=userRows[0];if(Number(owner.AccountDeleted)||['admin','superadmin','employee'].includes(String(owner.Role).toLowerCase()))throw Object.assign(new Error('An active personal account is required.'),{status:403});if(driver.User_ID_FK&&Number(driver.User_ID_FK)!==Number(owner.User_ID_Pk))throw Object.assign(new Error('Driver account linkage needs review. Contact support.'),{status:409});userId=owner.User_ID_Pk;
+            }else{
+                if(driver.User_ID_FK)throw Object.assign(new Error('Driver account linkage needs review. Contact support.'),{status:409});
+                const [created]=await conn.query('INSERT INTO users (User_Name,Email,Mobile,Role,Unique_ID) VALUES (?,?,?,?,?)',[driver.full_name,driver.email||'',normalizedPhone,'driver',crypto.randomBytes(16).toString('hex')]);userId=created.insertId;
             }
+            if(Number(driver.User_ID_FK)!==Number(userId))await conn.query('UPDATE drivers SET User_ID_FK=? WHERE id=?',[userId,driver.id]);
+            driver.User_ID_FK=userId;
 
             // Cleanup OTP
             await conn.query("DELETE FROM otp_verifications WHERE phone_number = ? AND purpose = 'driver_login'", [normalizedPhone]);
 
+            await conn.commit();
             const token = jwt.sign(
                 { userId, role: 'driver', phone: phone },
                 process.env.JWT_SECRET || 'your_fallback_secret',
@@ -487,10 +487,11 @@ const authController = {
                 }
             });
         } catch (err) {
-            console.error("Driver Verify OTP Error:", err);
-            res.status(500).json({ success: false, message: "Verification failed", error: err.message });
+            if(conn)await conn.rollback().catch(()=>{});
+            console.error("Driver Verify OTP Error:", err.code||err.message);
+            res.status(err.status||500).json({success:false,message:err.status?err.message:"Verification failed"});
         } finally {
-            if (conn) conn.release();
+            if(conn){await releasePhoneLock(conn,phoneLock);conn.release();}
         }
     },
 

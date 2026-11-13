@@ -2,12 +2,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createCityToCityDrivers, validateApplication } = require('../services/cityToCityDrivers');
 const body = () => ({ Name: 'Ali', FatherName: 'Ahmed', Cnic: '42101-1234567-1', DOB: '1995-02-20', Address: 'Karachi', Home_City_ID: '1', Vehicle_Type: 'Sedan', Vehicle_Make: 'Toyota', Vehicle_Model: 'Corolla', Manufacture_Year: '2022', Vehicle_Number: 'abc-123', Vehicle_Color: 'White', Passenger_Capacity: '4', Max_Parcel_Weight_Kg: '20', Services: '["shared","private","parcel"]' });
-function fixture({ existing = false, status = 'pending', cityRide = false, cityTrip = false, failure = false, deleted = false } = {}) {
+function fixture({ existing = false, status = 'pending', cityRide = false, cityTrip = false, failure = false, deleted = false, normalDriver = false } = {}) {
     const calls = [], state = { existing, status, commits: 0, rollbacks: 0, released: 0 };
     const conn = { async beginTransaction() {}, async commit() { state.commits++; }, async rollback() { state.rollbacks++; }, release() { state.released++; },
         async query(sql, args) {
             calls.push({ sql, args });
             if (sql.includes('FROM users WHERE')) return [[{ User_ID_Pk: 7, User_Name: 'Ali', Mobile: '03001234567', Email: 'ali@example.com', Role: 'rider', AccountDeleted: deleted ? 1 : 0 }]];
+            if(sql.includes("FROM drivers WHERE User_ID_FK=? AND status='active'"))return [normalDriver?[{id:9}]:[]];
             if (sql.includes('FROM ride_history')) return [cityRide ? [{ Ride_ID_Pk: 1 }] : []];
             if (sql.includes('FROM city_to_city_trips')) return [cityTrip ? [{ id: 5 }] : []];
             if (sql.includes('SELECT id, application_status FROM city_to_city_drivers')) return [state.existing ? [{ id: 12, application_status: status }] : []];
@@ -33,6 +34,7 @@ test('application is bound to authenticated user and writes only city-to-city ta
     assert.equal(result.exists, true);
     const insert = f.calls.find(call => call.sql.startsWith('INSERT INTO city_to_city_drivers'));
     assert.equal(insert.args[0], 7);
+    assert.deepEqual(f.calls.find(q=>q.sql==='UPDATE city_to_city_drivers SET driver_code=? WHERE id=?').args,['CTC_0012',12]);
     assert.match(insert.sql, /'pending'/);
     assert.ok(f.calls.some(call => call.sql.includes('INSERT INTO city_to_city_driver_documents') && call.args.includes('admin-private:test.jpg')));
     assert.equal(f.calls.filter(call => call.sql.startsWith('INSERT INTO city_to_city_driver_services')).length, 3);
@@ -75,4 +77,14 @@ test('city-to-city registration does not require vehicle make or manufacture yea
  const data=body();delete data.Vehicle_Make;delete data.Manufacture_Year;
  const result=validateApplication(data);assert.equal(result.make,null);assert.equal(result.year,null);
  assert.equal(validateApplication({...data,Vehicle_Type:'Ride AC'}).vehicleType,'Ride AC');
+});
+
+test('successful switches persist only last_active_mode and missing enrollment does not change it',async()=>{
+ for(const mode of ['rider','driver','city_to_city_driver']){
+  const f=fixture({existing:true,normalDriver:true});await f.service.switchMode(7,mode);
+  const writes=f.calls.filter(q=>q.sql.startsWith('UPDATE users'));
+  assert.equal(writes.length,1);assert.equal(writes[0].sql,'UPDATE users SET last_active_mode=? WHERE User_ID_Pk=?');assert.deepEqual(writes[0].args,[mode,7]);
+ }
+ const missing=fixture();await missing.service.switchMode(7,'city_to_city_driver');assert.equal(missing.calls.some(q=>q.sql.startsWith('UPDATE users')),false);
+ const busy=fixture({existing:true,cityRide:true});await assert.rejects(busy.service.switchMode(7,'rider'),{status:409});assert.equal(busy.calls.some(q=>q.sql.startsWith('UPDATE users')),false);
 });

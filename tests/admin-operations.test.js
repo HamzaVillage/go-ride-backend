@@ -567,3 +567,20 @@ test("a route can remove a default maximum fare and calculator respects the conf
     status: 400,
   });
 });
+
+test('service minimum top-up accepts money and is excluded from route tariffs',async()=>{
+ assert.deepEqual(validateChanges({minimum_topup_amount:'750.50'},base),{minimum_topup_amount:750.5});
+ assert.deepEqual(validateChanges({minimum_topup_amount:0},base),{minimum_topup_amount:0});
+ for(const amount of [-1,'',null,true,'1.001',100000000])assert.throws(()=>validateChanges({minimum_topup_amount:amount},base),{status:400});
+ assert.throws(()=>validateChanges({minimum_topup_amount:100},base,true),{status:400});
+ const f=tariffFixture();await f.service.save('services',1,7,{version:f.version,changes:{minimum_topup_amount:750}});
+ const q=f.state.queries.find(q=>q.sql.startsWith('UPDATE'));
+ assert.match(q.sql,/UPDATE city_to_city_services SET minimum_topup_amount=\?/);assert.deepEqual(q.args,[750,7,1]);
+ assert.equal(f.state.commits,1);
+});
+
+test('minimum required balance is validated as service money and excluded from route overrides',()=>{
+ assert.deepEqual(validateChanges({minimum_required_balance:'500.25'},base),{minimum_required_balance:500.25});
+ for(const value of [-1,'',true,null,'1.001'])assert.throws(()=>validateChanges({minimum_required_balance:value},base),{status:400});
+ assert.throws(()=>validateChanges({minimum_required_balance:500},base,true),{status:400});
+});

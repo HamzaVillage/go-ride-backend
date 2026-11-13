@@ -12,8 +12,10 @@ function createAdminCityToCityDrivers(pool) {
             const size = 30;
             const status = query.status || '';
             if (status && !['draft','pending','approved','rejected','suspended'].includes(status)) throw fail(400, 'Invalid application status.');
-            const where = status ? 'WHERE d.application_status=?' : '';
-            const params = status ? [status] : [];
+            if(query.q!==undefined&&(typeof query.q!=='string'||query.q.length>100))throw fail(400,'Invalid driver search.');
+            const filters=status?['d.application_status=?']:[],params=status?[status]:[];
+            if(query.q?.trim()){filters.push('(d.driver_code LIKE ? OR d.full_name LIKE ?)');const term=`%${query.q.trim().replace(/[\\%_]/g,'\\$&')}%`;params.push(term,term);}
+            const where=filters.length?'WHERE '+filters.join(' AND '):'';
             const [rows] = await pool.query(`SELECT d.id,d.driver_code,d.full_name,d.application_status,d.created_at,d.enrollment_source,c.City_Name AS city,u.Mobile AS phone FROM city_to_city_drivers d JOIN users u ON u.User_ID_Pk=d.user_id LEFT JOIN city c ON c.ID_PK=d.home_city_id ${where} ORDER BY d.id DESC LIMIT ? OFFSET ?`, [...params,size,(page-1)*size]);
             const [counts] = await pool.query(`SELECT COUNT(*) AS total FROM city_to_city_drivers d ${where}`, params);
             return { rows, page, page_size: size, total: Number(counts[0].total) };

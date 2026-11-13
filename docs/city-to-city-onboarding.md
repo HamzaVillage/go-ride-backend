@@ -250,3 +250,78 @@ presence refresh re-authorize subscriptions; polling remains a recovery fallback
 This is foreground realtime delivery, not a new background push notification
 system. Socket tests use mocked identities, and UI tests verify that an event
 refreshes a request card without advancing the polling clock.
+
+## Personal identity and enrollment in the other driver role
+
+Every app account has one canonical `users.User_ID_Pk`. The same person may have
+both `drivers.User_ID_FK` and `city_to_city_drivers.user_id` referencing that ID.
+Adding either driver role does not insert another personal account or overwrite
+`users.Role`. Employees continue to use their independent employee identity.
+
+For a new normal-driver signup, the personal user and pending driver application
+are inserted in one transaction. Public signup rejects an already registered
+phone and asks the person to sign in. Authenticated enrollment derives the user ID
+from the verified session; submitted ownership fields cannot select another user.
+Phone registration is serialized across app OTP signup, public driver signup and
+franchise member creation. Driver OTP login also preserves/repairs its own canonical
+user link instead of making another personal record based on a different role.
+
+City-to-city drivers applying to become normal drivers use:
+
+- `GET /user/driver-enrollment`: personal/vehicle prefills and reusable document
+  availability for the authenticated owner, with no private file keys/passwords.
+- `POST /user/driver-enrollment`: normal driver fields and missing uploads only.
+
+The existing driver signup screen reuses the owner's photo, CNIC front/back and
+licence when available and not rejected/expired. Changing the CNIC requires new
+CNIC images. Vehicle registration is reused only for the same plate and model;
+choosing a bike/rickshaw or another vehicle requires that vehicle's own document.
+The normal vehicle category is selected from its existing fare-category dropdown.
+The city-to-city car, documents, approval and wallet are left unchanged. A normal
+driver application is independently pending and needs its own admin approval.
+Retries return the linked application instead of inserting a duplicate driver.
+
+No schema change is required for this reverse-enrollment feature; it uses the
+existing user links and private document store. Existing duplicate personal
+accounts are not merged or deleted automatically.
+
+## Unified phone login and saved app mode
+
+The current mobile app has one phone/OTP login for riders and both driver roles.
+There are no password fields on login or personal signup. Driver signup selection
+also verifies/creates the personal account before opening its document form.
+
+Apply `db/migrations/add_mobile_last_active_mode.sql` (or run
+`node scripts/configureMobileAuth.js --apply`) before deploying this version.
+`users.last_active_mode` stores `rider`, `driver`, or `city_to_city_driver`; it is
+separate from identity, `users.Role`, and driver approval. NULL on legacy accounts
+uses linked profiles and the existing role as the first-login fallback.
+
+Current endpoints under `/auth`:
+
+- `POST /mobile-login` accepts `{phone}` and sends a login OTP.
+- `POST /mobile-register` accepts `{full_name,email,phone,signup_mode}` and sends a
+  signup OTP. It creates the personal account only after successful verification,
+  with a NULL password and the selected signup mode.
+- `POST /mobile-verify-otp` accepts `{phone_number,otp,otp_purpose}`. Purpose is
+  returned by the send endpoint. It returns the canonical user, appropriate driver
+  profile, saved mode, token and onboarding/status flags.
+- `POST /mobile-mode` requires the authenticated personal session and `{mode}`.
+  It checks existing trip/approval constraints, persists the selected mode, and
+  returns a refreshed session. Missing City-to-City enrollment prompts onboarding
+  without changing mode. The legacy City-to-City switch endpoint also persists
+  mode for compatible clients.
+
+Codes use SHA-256 storage, a ten-minute expiry, five-attempt limit and one-minute
+resend cooldown. Successful verification consumes the code transactionally;
+phone registration uses the shared lock to prevent duplicate personal users.
+No production OTP or reviewer bypass is returned to the app. Admin/employee login
+continues to use the independent admin authentication flow. Legacy API routes are
+retained for older mobile clients; the updated app uses the unified endpoints.
+
+Existing normal driver profiles open the original driver dashboard, which retains
+its existing approval, wallet and searching checks. Incomplete driver signup resumes
+its form. Driver status is normalized for legacy `Active`/`Pending` values. City-to-City applicants similarly
+resume onboarding or see independent approval status. Mode selection grants no
+approval and moves no wallet funds. Existing passwords and role columns are not
+removed or overwritten by this rollout.

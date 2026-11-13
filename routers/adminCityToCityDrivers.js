@@ -5,6 +5,11 @@ function createAdminCityToCityRouter(pool) {
     const router = express.Router(), service = createAdminCityToCityDrivers(pool);
     const error = (res, err) => { if (!err.status) console.error('City-to-city admin request failed:', err.code || 'INTERNAL_ERROR'); res.status(err.status || 500).json({ success: false, message: err.status ? err.message : 'Unable to complete this review.' }); };
     const respond = action => async (req, res) => { try { res.json({ success: true, data: await action(req) }); } catch (err) { error(res, err); } };
+    const wallet = require('../services/cityToCityWallet').createCityToCityWallet(pool);
+    router.get('/wallet-topups',respond(req=>wallet.pending(req.query)));
+    router.post('/:id/topups',respond(req=>wallet.credit(req.params.id,req.user.employeeId,req.body,req.get('Idempotency-Key'))));
+    router.get('/:id/wallet',respond(req=>wallet.summary(req.params.id,req.query)));
+    router.post('/:id/topups/:requestId/review',respond(req=>wallet.review(req.params.id,req.params.requestId,req.user.employeeId,req.body)));
     router.get('/', respond(req => service.list(req.query)));
     router.get('/:id', respond(req => service.detail(req.params.id)));
     router.patch('/:id/status', respond(req => service.review(req.params.id, req.user.employeeId, req.body)));

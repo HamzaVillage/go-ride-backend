@@ -13,7 +13,9 @@
     "setup:employee-access": "node scripts/configureEmployeeAccess.js",
     "setup:admin-settings": "node scripts/configureAdminSettings.js",
     "setup:staff-identities": "node scripts/separateStaffIdentities.js",
-    "setup:staff-admin": "node scripts/createStaffAdmin.js"
+    "setup:staff-admin": "node scripts/createStaffAdmin.js",
+    "setup:city-to-city-wallet": "node scripts/configureCityToCityWallet.js",
+    "setup:mobile-auth": "node scripts/configureMobileAuth.js"
   },
   "keywords": [],
   "dependencies": {

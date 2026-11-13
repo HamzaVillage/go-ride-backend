@@ -221,7 +221,7 @@ const userController = {
             if (rows.length === 0) {
                 return res.json({ success: true, exists: false });
             }
-            res.json({ success: true, exists: true, status: rows[0].status });
+            res.json({ success: true, exists: true, status: String(rows[0].status || '').trim().toLowerCase() });
         } catch (err) {
             console.error("Get Driver Status Error:", err);
             res.status(500).json({ success: false, message: "Error checking driver status", error: err.message });
@@ -230,175 +230,17 @@ const userController = {
         }
     },
 
-    registerDriver: async (req, res) => {
-        let conn;
+    registerDriver: async (req,res) => {
         try {
-            const {
-                Name,
-                FatherName,
-                Cnic,
-                DOB,
-                Mobile,
-                Email,
-                Address,
-                City,
-                Vehicle_Type,
-                Vehicle_Model,
-                Vehicle_Number,
-                Vehicle_Color,
-                EasyPaisa,
-                JazzCash,
-                Password
-            } = req.body;
-
-            // Simple validation
-            if (!Name || !Cnic || !DOB || !Mobile || !Address || !City || !Vehicle_Type || !Vehicle_Model || !Vehicle_Number || !Vehicle_Color) {
-                return res.status(400).json({ success: false, message: "Missing required onboarding fields" });
+            const {createNormalDriverEnrollment}=require('../services/normalDriverEnrollment');
+            const service=createNormalDriverEnrollment(pool);
+            const files={};for(const field of ['Photo','CNIC_Front','CNIC_Back','License','Vehicle_Running_Page']){
+                const file=req.files?.[field]?.[0] || (field==='Vehicle_Running_Page'?req.files?.Vehicle_Doc?.[0]:null);
+                if(file)files[field]=getFullUploadUrl(file.filename);
             }
-
-            conn = await pool.getConnection();
-
-            // Validate and normalize phone number
-            const normalizedPhone = String(Mobile).replace(/\D/g, '');
-            if (normalizedPhone.length !== 11) {
-                return res.status(400).json({ success: false, message: "Mobile number must be exactly 11 digits (e.g. 03001234567)" });
-            }
-            if (!normalizedPhone.startsWith('03')) {
-                return res.status(400).json({ success: false, message: "Mobile number must start with 03 (e.g. 03001234567)" });
-            }
-
-            // Check if phone number already registered as driver
-            const [existing] = await conn.query(
-                "SELECT id FROM drivers WHERE REPLACE(phone, '-', '') = ?",
-                [normalizedPhone]
-            );
-            if (existing.length > 0) {
-                return res.status(400).json({ success: false, message: "A driver with this phone number is already registered" });
-            }
-
-            // Extract file paths from uploaded files with base URL
-            const photo_path = req.files && req.files['Photo'] ? getFullUploadUrl(req.files['Photo'][0].filename) : null;
-            const cnic_front_path = req.files && req.files['CNIC_Front'] ? getFullUploadUrl(req.files['CNIC_Front'][0].filename) : null;
-            const cnic_back_path = req.files && req.files['CNIC_Back'] ? getFullUploadUrl(req.files['CNIC_Back'][0].filename) : null;
-            const license_path = req.files && req.files['License'] ? getFullUploadUrl(req.files['License'][0].filename) : null;
-            const vehicle_doc_path = req.files && (req.files['Vehicle_Running_Page'] || req.files['Vehicle_Doc'])
-                ? getFullUploadUrl((req.files['Vehicle_Running_Page'] || req.files['Vehicle_Doc'])[0].filename)
-                : null;
-
-            // Driver code (GRD-1000+id) will be derived after insert
-
-            // Match to existing user if phone exists
-            let userIdFK = null;
-            const [matchingUser] = await conn.query(
-                "SELECT User_ID_Pk FROM users WHERE REPLACE(Mobile, '-', '') = ? LIMIT 1",
-                [normalizedPhone]
-            );
-            if (matchingUser.length > 0) {
-                userIdFK = matchingUser[0].User_ID_Pk;
-                if (photo_path) {
-                    try {
-                        await conn.query("UPDATE users SET User_Pic = ? WHERE User_ID_Pk = ?", [photo_path, userIdFK]);
-                    } catch (e) {
-                        console.warn("Could not update existing user User_Pic:", e.message);
-                    }
-                }
-            } else {
-                // Create user record in users table if it does not exist
-                const crypto = require('crypto');
-                const bcrypt = require('bcryptjs');
-                const uniqueId = crypto.randomBytes(16).toString('hex');
-                const hashedPassword = await bcrypt.hash(Password || '12345', 10);
-
-                const [newUserResult] = await conn.query(
-                    `INSERT INTO users (User_Name, Email, Password, Mobile, Role, Unique_ID, User_Pic) 
-                     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                    [Name, Email || null, hashedPassword, normalizedPhone, 'driver', uniqueId, photo_path || null]
-                );
-                userIdFK = newUserResult.insertId;
-            }
-
-            // Format CNIC to fit varchar(15) db column
-            const dbCnic = String(Cnic).slice(0, 15);
-
-            // Convert DOB from dd/mm/yyyy or dd-mm-yyyy to yyyy-mm-dd format
-            let dbDob = DOB;
-            if (DOB) {
-                const cleanDob = String(DOB).trim();
-                const parts = cleanDob.split(/[\/\-]/);
-                if (parts.length === 3) {
-                    let year = parts[2];
-                    if (year.length === 2) {
-                        year = parseInt(year) > 26 ? `19${year}` : `20${year}`;
-                    }
-                    if (parts[0].length === 4) {
-                        dbDob = cleanDob;
-                    } else {
-                        const p0 = parseInt(parts[0]);
-                        const p1 = parseInt(parts[1]);
-                        let day = p0;
-                        let month = p1;
-                        if (p1 > 12) {
-                            day = p1;
-                            month = p0;
-                        }
-                        const formattedMonth = String(month).padStart(2, '0');
-                        const formattedDay = String(day).padStart(2, '0');
-                        dbDob = `${year}-${formattedMonth}-${formattedDay}`;
-                    }
-                }
-            }
-
-            const query = `
-                INSERT INTO drivers (
-                    User_ID_FK, driver_code, full_name, father_name, cnic, 
-                    Easypaisa, JazzCash, dob, phone, email, 
-                    address, city, vehicle_type, vehicle_model, vehicle_number, 
-                    vehicle_color, photo_path, cnic_front_path, cnic_back_path, license_path, 
-                    vehicle_doc_path, status, join_date, password
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), ?)
-            `;
-
-            const [driverResult] = await conn.query(query, [
-                userIdFK,
-                null,
-                Name,
-                FatherName || null,
-                dbCnic,
-                EasyPaisa || null,
-                JazzCash || null,
-                dbDob,
-                Mobile,
-                Email || null,
-                Address,
-                City,
-                Vehicle_Type,
-                Vehicle_Model,
-                Vehicle_Number,
-                Vehicle_Color,
-                photo_path,
-                cnic_front_path,
-                cnic_back_path,
-                license_path,
-                vehicle_doc_path,
-                'pending',
-                Password || '12345'
-            ]);
-
-            const newDriverId = driverResult.insertId;
-            const permanentCode = formatDriverCode(newDriverId);
-            await conn.query("UPDATE drivers SET driver_code = ? WHERE id = ?", [permanentCode, newDriverId]);
-
-            res.json({
-                success: true,
-                message: "Driver registration request submitted successfully!",
-                driver_code: permanentCode,
-            });
-        } catch (err) {
-            console.error("Register Driver Error:", err);
-            res.status(500).json({ success: false, message: "Error registering driver", error: err.message });
-        } finally {
-            if (conn) conn.release();
-        }
+            const result=req.user ? await service.enroll(req.user.userId,req.body,files) : await service.registerPublic(req.body,files);
+            res.json({success:true,message:'Driver registration request submitted successfully!',...result});
+        }catch(error){if(!error.status)console.error('Register Driver Error:',error.code||'INTERNAL_ERROR');res.status(error.status||500).json({success:false,message:error.status?error.message:'Error registering driver'});}
     },
 
     pingUserLocation: async (req, res) => {

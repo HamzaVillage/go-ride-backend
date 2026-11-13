@@ -1,0 +1,41 @@
+-- Independent City-to-City ledger. Does not alter any normal/rider wallet table.
+CREATE TABLE IF NOT EXISTS city_to_city_topup_requests (
+ id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+ city_to_city_driver_id INT NOT NULL,
+ service_id INT NOT NULL,
+ amount DECIMAL(10,2) NOT NULL,
+ minimum_topup_snapshot DECIMAL(10,2) NOT NULL,
+ payment_method VARCHAR(30) NOT NULL,
+ payment_reference VARCHAR(120) NOT NULL,
+ idempotency_key VARCHAR(64) NOT NULL,
+ status ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+ review_reason VARCHAR(500) NULL,
+ reviewed_by_employee_id INT NULL,
+ created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ reviewed_at DATETIME NULL,
+ UNIQUE KEY uq_c2c_topup_retry (city_to_city_driver_id,idempotency_key),
+ UNIQUE KEY uq_c2c_topup_payment (payment_method,payment_reference),
+ KEY ix_c2c_topup_status (status,id),
+ CONSTRAINT fk_c2c_topup_driver FOREIGN KEY (city_to_city_driver_id) REFERENCES city_to_city_drivers(id),
+ CONSTRAINT fk_c2c_topup_service FOREIGN KEY (service_id) REFERENCES city_to_city_services(id),
+ CONSTRAINT chk_c2c_topup_positive CHECK (amount>0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS city_to_city_wallet (
+ id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+ city_to_city_driver_id INT NOT NULL,
+ transaction_type ENUM('credit','debit') NOT NULL,
+ amount DECIMAL(10,2) NOT NULL,
+ reference_id VARCHAR(100) NOT NULL,
+ description VARCHAR(500) NOT NULL,
+ topup_request_id BIGINT NULL,
+ trip_id INT NULL,
+ created_by_employee_id INT NULL,
+ created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ UNIQUE KEY uq_c2c_wallet_reference (reference_id),
+ UNIQUE KEY uq_c2c_wallet_topup (topup_request_id),
+ KEY ix_c2c_wallet_driver (city_to_city_driver_id,id),
+ CONSTRAINT fk_c2c_wallet_driver FOREIGN KEY (city_to_city_driver_id) REFERENCES city_to_city_drivers(id),
+ CONSTRAINT fk_c2c_wallet_topup FOREIGN KEY (topup_request_id) REFERENCES city_to_city_topup_requests(id),
+ CONSTRAINT fk_c2c_wallet_trip FOREIGN KEY (trip_id) REFERENCES city_to_city_trips(id),
+ CONSTRAINT chk_c2c_wallet_positive CHECK (amount>0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

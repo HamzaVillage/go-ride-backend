@@ -1,16 +1,18 @@
 const test=require('node:test');const assert=require('node:assert/strict');
 const {createCityToCityDispatch}=require('../services/cityToCityDispatch');
-function fixture({service='shared',capacity=4,weight=20,city=1,active=false,approved=true,enabled=true,fresh=true,requestFresh=true}={}){
+function fixture({service='shared',capacity=4,weight=20,city=1,active=false,approved=true,enabled=true,wallet=1000,required=0,fresh=true,requestFresh=true}={}){
  const state={queries:[],assigned:null,commits:0,rollbacks:0};let unlock;let queue=Promise.resolve();
  const request={id:9,customer_user_id:55,service_id:1,service_type:service,origin_city_id:1,destination_city_id:2,pickup_address:'Karachi pickup',dropoff_address:'Hyderabad drop',passenger_count:service==='parcel'?null:3,weight_kg:service==='parcel'?10:null,status:'open',request_is_fresh:requestFresh?1:0,expires_at:new Date(Date.now()+3600000),requested_departure_at:new Date(),customer_offer_amount:'3000',currency:'PKR',fare_snapshot:JSON.stringify({commission_percent:10})};
  async function query(sql,args=[]){state.queries.push({sql,args});
+  if(sql.includes('FROM city_to_city_wallet'))return [[{balance:wallet}]];
+  if(sql.startsWith('SELECT s.id,s.minimum_required_balance'))return [[{id:1,minimum_required_balance:required,minimum_topup_amount:500}]];
   if(sql.includes('FROM sysconfigsetup'))return [[{city_to_city_service:enabled?1:0}]];
   if(sql.startsWith('SELECT *, (presence_updated_at'))return [[{id:args[0],user_id:args[0],application_status:approved?'approved':'pending',is_online:1,current_city_id:city,presence_updated_at:new Date(Date.now()-5*3600000),presence_is_fresh:fresh?1:0}]];
   if(sql.includes('FROM ride_history'))return [active?[{Ride_ID_Pk:1}]:[]];
   if(sql.startsWith('SELECT id FROM city_to_city_trips'))return [[]];
   if(sql.startsWith('SELECT b.id'))return [[]];
   if(sql.startsWith('SELECT r.*,p.weight_kg'))return [[{...request,status:state.assigned?'booked':'open'}]];
-  if(sql.startsWith('SELECT ds.id'))return [[{id:1}]];
+  if(sql.startsWith('SELECT ds.id'))return [[{id:1,minimum_required_balance:required}]];
   if(sql.startsWith('SELECT * FROM city_to_city_vehicles'))return [(service==='parcel'?weight>=10:capacity>=3)?[{id:80,passenger_capacity:capacity,max_parcel_weight_kg:weight}]:[]];
   if(sql.startsWith('INSERT INTO city_to_city_trips'))return [{insertId:200}];
   if(sql.startsWith('INSERT INTO city_to_city_bookings'))return [{insertId:201}];
@@ -40,7 +42,7 @@ test('city mismatch, insufficient capacity, pending approval, disabled service a
  }
 });
 test('feed filters by current origin city, approved services and vehicle capacity without any distance radius',async()=>{
- const f=fixture();await f.service.requests(10);const q=f.state.queries.find(q=>q.sql.startsWith('SELECT r.id,r.service_type'));assert.equal(q.args[1],1);
+ const f=fixture();await f.service.requests(10);const q=f.state.queries.find(q=>q.sql.startsWith('SELECT r.id,r.service_type'));assert.equal(q.args[2],1);
  assert.match(q.sql,/r.origin_city_id=\?/);assert.match(q.sql,/passenger_capacity>=r.passenger_count/);assert.match(q.sql,/max_parcel_weight_kg>=p.weight_kg/);assert.doesNotMatch(q.sql,/ST_DISTANCE|ACOS|HAVERSINE|radius|home_city/i);
 });
 test('all three services share dispatch; parcel trips reserve kg rather than passenger seats',async()=>{
@@ -126,4 +128,14 @@ test('stale driver presence and expired requests are rejected using SQL freshnes
  await assert.rejects(stale.service.accept(10,9),{status:409});
  const expired=fixture({requestFresh:false});await assert.rejects(expired.service.accept(10,9),{status:409});
  assert.equal(expired.state.queries.some(q=>q.sql.startsWith('INSERT')),false);
+});
+
+test('zero or insufficient City-to-City balance blocks presence, feed and acceptance',async()=>{
+ for(const settings of [{wallet:0},{wallet:499,required:500}]){
+ const f=fixture(settings);const presence=await f.service.presence(10,{online:true,latitude:24,longitude:67});assert.equal(presence.topup_required,true);assert.equal(presence.online,false);
+ const feed=await f.service.requests(10);assert.equal(feed.topup_required,true);assert.deepEqual(feed.requests,[]);
+ await assert.rejects(f.service.accept(10,9),{status:409});assert.equal(f.state.queries.some(q=>q.sql.startsWith('INSERT INTO city_to_city_trips')),false);
+ }
+ const f=fixture({wallet:500,required:500});assert.equal((await f.service.requests(10)).online,true);
+ const q=f.state.queries.find(q=>q.sql.startsWith('SELECT r.id,r.service_type'));assert.match(q.sql,/s.minimum_required_balance<=\?/);assert.equal(q.args[1],500);
 });

@@ -1,4 +1,5 @@
 const { randomUUID } = require('node:crypto');
+const {formatCityToCityDriverCode}=require('./cityToCityDriverCode');
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const VEHICLE_TYPES = ['Car', 'Ride Mini', 'Ride AC', 'Ride Plus', 'Sedan', 'SUV', 'MPV', 'Van'];
 const DOCUMENT_TYPES = { Photo: 'photo', CNIC_Front: 'cnic_front', CNIC_Back: 'cnic_back', License: 'license', Vehicle_Running_Page: 'vehicle_registration' };
@@ -127,8 +128,9 @@ function createCityToCityDrivers(pool) {
                 if (!source) throw Object.assign(fail(409,'Complete the city-to-city signup form to enroll.'),{code:'FULL_ONBOARDING_REQUIRED'});
                 const [cities] = await conn.query('SELECT ID_PK FROM city WHERE LOWER(TRIM(City_Name))=LOWER(TRIM(?)) ORDER BY ID_PK LIMIT 2',[source.city || '']);
                 const snapshot = { vehicle_type:source.vehicle_type, model:source.vehicle_model, registration_number:source.vehicle_number, color:source.vehicle_color, city:source.city };
-                const [created] = await conn.query("INSERT INTO city_to_city_drivers (user_id,driver_code,home_city_id,source_driver_id,enrollment_source,source_snapshot,full_name,father_name,cnic,dob,address,easypaisa,jazzcash,application_status,is_online) VALUES (?,?,?,?,'city_driver',?,?,?,?,?,?,?,?,'pending',0)",[userId,`C2C-${randomUUID().slice(0,20)}`,cities.length===1?cities[0].ID_PK:null,source.id,JSON.stringify(snapshot),source.full_name || owner.User_Name,source.father_name,source.cnic,source.dob,source.address,source.Easypaisa,source.JazzCash]);
+                const [created] = await conn.query("INSERT INTO city_to_city_drivers (user_id,driver_code,home_city_id,source_driver_id,enrollment_source,source_snapshot,full_name,father_name,cnic,dob,address,easypaisa,jazzcash,application_status,is_online) VALUES (?,?,?,?,'city_driver',?,?,?,?,?,?,?,?,'pending',0)",[userId,`CTP_${randomUUID().slice(0,20)}`,cities.length===1?cities[0].ID_PK:null,source.id,JSON.stringify(snapshot),source.full_name || owner.User_Name,source.father_name,source.cnic,source.dob,source.address,source.Easypaisa,source.JazzCash]);
                 const driverId=created.insertId;
+                await conn.query('UPDATE city_to_city_drivers SET driver_code=? WHERE id=?',[formatCityToCityDriverCode(driverId),driverId]);
                 const [services]=await conn.query('SELECT id,code FROM city_to_city_services WHERE is_active=1 ORDER BY sort_order');
                 for(const service of services) await conn.query("INSERT INTO city_to_city_driver_services (city_to_city_driver_id,service_id,service_type,approval_status,is_enabled) VALUES (?,?,?,'pending',0)",[driverId,service.id,service.code]);
                 for(const [key,type] of Object.entries({photo_path:'photo',cnic_front_path:'cnic_front',cnic_back_path:'cnic_back',license_path:'license',vehicle_doc_path:'vehicle_registration'})) {
@@ -166,8 +168,9 @@ function createCityToCityDrivers(pool) {
                     await conn.query('UPDATE city_to_city_vehicles SET is_active = 0 WHERE city_to_city_driver_id = ?', [driverId]);
                     await conn.query("UPDATE city_to_city_driver_services SET is_enabled = 0, approval_status='suspended' WHERE city_to_city_driver_id = ?", [driverId]);
                 } else {
-                    const [result] = await conn.query("INSERT INTO city_to_city_drivers (user_id,driver_code,home_city_id,full_name,father_name,cnic,dob,address,easypaisa,jazzcash,application_status) VALUES (?,?,?,?,?,?,?,?,?,?,'pending')", [userId, `C2C-${randomUUID().slice(0, 20)}`, ...values]);
+                    const [result] = await conn.query("INSERT INTO city_to_city_drivers (user_id,driver_code,home_city_id,full_name,father_name,cnic,dob,address,easypaisa,jazzcash,application_status) VALUES (?,?,?,?,?,?,?,?,?,?,'pending')", [userId, `CTP_${randomUUID().slice(0, 20)}`, ...values]);
                     driverId = result.insertId;
+                    await conn.query('UPDATE city_to_city_drivers SET driver_code=? WHERE id=?',[formatCityToCityDriverCode(driverId),driverId]);
                 }
                 const [vehicle] = await conn.query("INSERT INTO city_to_city_vehicles (city_to_city_driver_id,vehicle_type,make,model,manufacture_year,registration_number,color,passenger_capacity,max_parcel_weight_kg) VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE vehicle_type=VALUES(vehicle_type),make=COALESCE(VALUES(make),make),model=VALUES(model),manufacture_year=COALESCE(VALUES(manufacture_year),manufacture_year),color=VALUES(color),passenger_capacity=VALUES(passenger_capacity),max_parcel_weight_kg=VALUES(max_parcel_weight_kg),approval_status='pending',is_active=1,id=LAST_INSERT_ID(id)", [driverId,data.vehicleType,data.make,data.model,data.year,data.plate,data.color,data.seats,data.weight]);
                 for (const service of services) await conn.query("INSERT INTO city_to_city_driver_services (city_to_city_driver_id,service_id,service_type) VALUES (?,?,?) ON DUPLICATE KEY UPDATE approval_status='pending',is_enabled=0", [driverId,service.id,service.code]);
@@ -192,6 +195,7 @@ function createCityToCityDrivers(pool) {
                 }
                 const result = await account(conn, userId);
                 if (target === 'city_to_city_driver' && !result.exists) return { mode: target, needs_onboarding: true, can_reuse_driver: Boolean(await sourceDriver(conn,owner)) };
+                await conn.query('UPDATE users SET last_active_mode=? WHERE User_ID_Pk=?',[target,userId]);
                 if(target !== 'city_to_city_driver' && result.exists) await conn.query('UPDATE city_to_city_drivers SET is_online=0 WHERE id=?',[result.profile.id]);
                 return { mode: target, needs_capacity: target === 'city_to_city_driver' && result.exists && !result.profile.vehicles?.some(v=>Number(v.passenger_capacity)>0 && Number(v.max_parcel_weight_kg)>0), ...result, user: { id: owner.User_ID_Pk, name: owner.User_Name, phone: owner.Mobile, email: owner.Email } };
             });
