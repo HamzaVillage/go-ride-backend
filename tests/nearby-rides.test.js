@@ -5,12 +5,12 @@ const path = require('node:path');
 const vm = require('node:vm');
 const dispatch = require('../services/driverDispatch');
 
-async function request({ offline = false, stale = false, status = 'active', available = 1, busy = false, query = { driver_lat: 30, driver_lng: 70, vehicle_type: 'bike' } } = {}) {
+async function request({ oldDues = false, offline = false, stale = false, status = 'active', available = 1, busy = false, query = { driver_lat: 30, driver_lng: 70, vehicle_type: 'bike' } } = {}) {
     let listingParams;
     let released = false;
     const conn = { release() { released = true; }, async query(sql, args) {
         if (sql.includes('FROM sysconfigsetup')) return [[{ dispatch_radius_km: 8, dispatch_min_radius_km: 1 }]];
-        if (sql.includes('FROM drivers')) return [[{ id: 10, User_ID_FK: 10, vehicle_type: 'Mini', status, Is_Available: available, completed_rides_count: 0 }]];
+        if (sql.includes('FROM drivers')) return [[{ id: 10, User_ID_FK: 10, vehicle_type: 'Mini', status, Is_Available: available, completed_rides_count: oldDues ? 500 : 0, overdue_since: oldDues ? '2000-01-01 00:00:00' : null }]];
         if (sql.includes('FROM vehicle_fare_rate')) return [[]];
         if (sql.includes('WHERE Driver_ID_Fk')) return [busy ? [{ Ride_ID_Pk: 3 }] : []];
         if (sql.includes('AS distance_km')) {
@@ -67,4 +67,10 @@ test('invalid GPS request is rejected before database access', async () => {
     const result = await request({ query: { driver_lat: '', driver_lng: 67 } });
     assert.equal(result.res.statusCode, 400);
     assert.equal(result.released, false);
+});
+
+
+test('legacy dues timestamp and high ride count do not block nearby rides', async () => {
+ const result=await request({oldDues:true});
+ assert.equal(result.res.statusCode,200);assert.ok(result.listingParams);assert.equal(result.released,true);
 });

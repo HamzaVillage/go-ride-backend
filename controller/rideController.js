@@ -190,7 +190,7 @@ const rideController = {
 
             // Derive driver info from JWT for security
             const [driverRows] = await conn.query(
-                "SELECT id, User_ID_FK, vehicle_type, status, Is_Available, overdue_since, completed_rides_count FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                "SELECT id, User_ID_FK, vehicle_type, status, Is_Available FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
                 [user.userId || 0, user.phone]
             );
             if (driverRows.length === 0) {
@@ -218,39 +218,6 @@ const rideController = {
                     min_wallet_balance,
                     message: `Your wallet balance (Rs. ${wallet_balance.toFixed(2)}) is below the minimum required limit (Rs. ${min_wallet_balance.toFixed(2)}). Please top up your wallet to continue finding rides.`
                 });
-            }
-
-            const totalRides = parseInt(driver.completed_rides_count || 0, 10);
-            let vehicleRidesLimit = 0;
-            let vehicleRidesOverLimitCount = 0;
-            if (driver.vehicle_type) {
-                const [rateRows] = await conn.query(
-                    "SELECT rides_limit, rides_over_limit_count FROM vehicle_fare_rate WHERE Vehicle_Type = ? AND Is_Active = 1 LIMIT 1",
-                    [driver.vehicle_type]
-                );
-                vehicleRidesLimit = parseInt(rateRows[0]?.rides_limit ?? 0, 10);
-                vehicleRidesOverLimitCount = parseInt(rateRows[0]?.rides_over_limit_count ?? 0, 10);
-            }
-            const ridesBeyondMax = vehicleRidesLimit > 0 ? Math.max(0, totalRides - vehicleRidesLimit) : 0;
-            const meetsLimit = (vehicleRidesLimit > 0 && totalRides >= vehicleRidesLimit) ||
-                (vehicleRidesOverLimitCount > 0 && ridesBeyondMax >= vehicleRidesOverLimitCount);
-
-            if (meetsLimit) {
-                if (!driver.overdue_since) {
-                    await conn.query("UPDATE drivers SET overdue_since = NOW() WHERE id = ? AND overdue_since IS NULL", [driver.id]);
-                }
-                const [overdueCheck] = await conn.query(
-                    "SELECT TIMESTAMPDIFF(HOUR, overdue_since, NOW()) as hours_overdue FROM drivers WHERE id = ?",
-                    [driver.id]
-                );
-                const hoursOverdue = parseInt(overdueCheck[0]?.hours_overdue ?? 0, 10);
-                if (hoursOverdue >= 8) {
-                    return res.status(403).json({
-                        success: false,
-                        message: "Your account is blocked. Please clear your dues to continue finding rides.",
-                        blocked: true
-                    });
-                }
             }
 
             const searchConfig = await getSearchConfig(conn);
@@ -945,43 +912,7 @@ const rideController = {
                 [driver.id]
             );
 
-            // Overdue: get limits from vehicle_fare_rate (JOIN by vehicle_type), compute meetsLimit
-            let overdue_info = null;
-            const totalRides = parseInt(driver.completed_rides_count || 0, 10);
-            let vehicleRidesLimit = 0;
-            let vehicleRidesOverLimitCount = 0;
-            if (driver.vehicle_type) {
-                const [rateRows] = await conn.query(
-                    "SELECT rides_limit, rides_over_limit_count FROM vehicle_fare_rate WHERE Vehicle_Type = ? AND Is_Active = 1 LIMIT 1",
-                    [driver.vehicle_type]
-                );
-                vehicleRidesLimit = parseInt(rateRows[0]?.rides_limit ?? 0, 10);
-                vehicleRidesOverLimitCount = parseInt(rateRows[0]?.rides_over_limit_count ?? 0, 10);
-            }
-            const ridesBeyondMax = vehicleRidesLimit > 0 ? Math.max(0, totalRides - vehicleRidesLimit) : 0;
-            const meetsLimit = (vehicleRidesLimit > 0 && totalRides >= vehicleRidesLimit) ||
-                (vehicleRidesOverLimitCount > 0 && ridesBeyondMax >= vehicleRidesOverLimitCount);
-
-            if (meetsLimit) {
-                if (!driver.overdue_since) {
-                    await conn.query("UPDATE drivers SET overdue_since = NOW() WHERE id = ? AND overdue_since IS NULL", [driver.id]);
-                    driver.overdue_since = new Date().toISOString().slice(0, 19).replace('T', ' ');
-                }
-                const [overdueRows] = await conn.query(
-                    "SELECT TIMESTAMPDIFF(HOUR, overdue_since, NOW()) as hours_overdue, overdue_since FROM drivers WHERE id = ?",
-                    [driver.id]
-                );
-                const hoursOverdue = parseInt(overdueRows[0]?.hours_overdue ?? 0, 10);
-                const hoursRemaining = Math.max(0, 8 - hoursOverdue);
-                overdue_info = {
-                    overdue_since: overdueRows[0]?.overdue_since || driver.overdue_since,
-                    hours_overdue: hoursOverdue,
-                    hours_remaining: hoursRemaining,
-                    is_blocked: hoursOverdue >= 8,
-                    amount_due: parseFloat(driver.driver_earnings_sum || 0),
-                    rides_count: totalRides,
-                };
-            }
+            const overdue_info = null; // Legacy ride-count dues have been retired.
 
             // Calculate driver wallet balance and dynamic vehicle minimum limit
             const wallet_balance = await getDriverWalletBalance(conn, driver.id, driver.User_ID_FK);
@@ -1012,33 +943,9 @@ const rideController = {
         }
     },
 
+    // Compatibility endpoint for old apps. Never reset earnings or ride totals.
     clearOverdue: async (req, res) => {
-        const user = req.user;
-        let conn;
-        try {
-            conn = await pool.getConnection();
-
-            const [driverRows] = await conn.query(
-                "SELECT id FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
-                [user.userId || 0, user.phone]
-            );
-            if (driverRows.length === 0) {
-                return res.status(403).json({ success: false, message: "Only registered drivers can clear overdue" });
-            }
-            const driverId = driverRows[0].id;
-
-            await conn.query(
-                "UPDATE drivers SET overdue_since = NULL, driver_earnings_sum = 0, completed_rides_count = 0 WHERE id = ?",
-                [driverId]
-            );
-
-            res.json({ success: true, message: "Overdue cleared. You can now find rides." });
-        } catch (err) {
-            console.error("Clear Overdue Error:", err);
-            res.status(500).json({ success: false, message: "Error clearing overdue", error: err.message });
-        } finally {
-            if (conn) conn.release();
-        }
+        res.json({success: true, message: 'The legacy dues system has been retired.', overdue_info: null});
     },
 
     getDriverEarnings: async (req, res) => {
@@ -1048,7 +955,7 @@ const rideController = {
             conn = await pool.getConnection();
 
             const [driverRows] = await conn.query(
-                "SELECT id, User_ID_FK FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                "SELECT id, User_ID_FK, vehicle_type FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
                 [user.userId || 0, user.phone]
             );
             if (driverRows.length === 0) {
@@ -1076,45 +983,7 @@ const rideController = {
                 [driverId]
             );
 
-            const [driverInfo] = await conn.query(
-                "SELECT vehicle_type, overdue_since, driver_earnings_sum, completed_rides_count FROM drivers WHERE id = ?",
-                [driverId]
-            );
-            const d = driverInfo[0];
-            let overdue_info = null;
-            const totalRides = parseInt(d?.completed_rides_count || 0, 10);
-            let vehicleRidesLimit = 0;
-            let vehicleRidesOverLimitCount = 0;
-            if (d?.vehicle_type) {
-                const [rateRows] = await conn.query(
-                    "SELECT rides_limit, rides_over_limit_count FROM vehicle_fare_rate WHERE Vehicle_Type = ? AND Is_Active = 1 LIMIT 1",
-                    [d.vehicle_type]
-                );
-                vehicleRidesLimit = parseInt(rateRows[0]?.rides_limit ?? 0, 10);
-                vehicleRidesOverLimitCount = parseInt(rateRows[0]?.rides_over_limit_count ?? 0, 10);
-            }
-            const ridesBeyondMax = vehicleRidesLimit > 0 ? Math.max(0, totalRides - vehicleRidesLimit) : 0;
-            const meetsLimit = (vehicleRidesLimit > 0 && totalRides >= vehicleRidesLimit) ||
-                (vehicleRidesOverLimitCount > 0 && ridesBeyondMax >= vehicleRidesOverLimitCount);
-
-            if (meetsLimit) {
-                if (!d?.overdue_since) {
-                    await conn.query("UPDATE drivers SET overdue_since = NOW() WHERE id = ? AND overdue_since IS NULL", [driverId]);
-                }
-                const [overdueRows] = await conn.query(
-                    "SELECT TIMESTAMPDIFF(HOUR, overdue_since, NOW()) as hours_overdue, overdue_since FROM drivers WHERE id = ?",
-                    [driverId]
-                );
-                const hoursOverdue = parseInt(overdueRows[0]?.hours_overdue ?? 0, 10);
-                overdue_info = {
-                    overdue_since: overdueRows[0]?.overdue_since || d?.overdue_since,
-                    hours_overdue: hoursOverdue,
-                    hours_remaining: Math.max(0, 8 - hoursOverdue),
-                    is_blocked: hoursOverdue >= 8,
-                    amount_due: parseFloat(d?.driver_earnings_sum || 0),
-                    rides_count: totalRides,
-                };
-            }
+            const overdue_info = null;
 
             // Calculate wallet balance for driver
             const driver_wallet_balance = await getDriverWalletBalance(conn, driverId, driverRows[0]?.User_ID_FK);

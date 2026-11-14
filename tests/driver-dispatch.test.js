@@ -48,7 +48,7 @@ test('dispatch targets only nearby eligible sockets, never the whole vehicle roo
         assert.match(sql, /LOWER\(TRIM\(d.status\)\) = 'active'/);
         assert.match(sql, /d.Is_Available = 1/);
         assert.match(sql, /NOT EXISTS/);
-        assert.match(sql, /overdue_since/);
+        assert.doesNotMatch(sql, /overdue_since/);
         assert.deepEqual(params, [10, 20, 'mini']);
         return [[{ id: 10 }]];
     } };

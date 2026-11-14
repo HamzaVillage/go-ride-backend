@@ -71,14 +71,6 @@ async function settleRideCompletion(conn, ride) {
         [ride.Ride_ID_Pk, ride.Driver_ID_Fk, fare, orgFee, earning, paymentMethod, ride.Vehicle_Type || null]
     );
     await conn.query('UPDATE drivers SET completed_rides_count = COALESCE(completed_rides_count, 0) + 1, driver_earnings_sum = COALESCE(driver_earnings_sum, 0) + ? WHERE id = ?', [earning, ride.Driver_ID_Fk]);
-    const [totals] = await conn.query('SELECT completed_rides_count FROM drivers WHERE id = ?', [ride.Driver_ID_Fk]);
-    const [rates] = await conn.query('SELECT rides_limit, rides_over_limit_count FROM vehicle_fare_rate WHERE Vehicle_Type = ? AND Is_Active = 1 LIMIT 1', [ride.Vehicle_Type]);
-    const count = Number(totals[0]?.completed_rides_count || 0);
-    const limit = Number(rates[0]?.rides_limit || 0);
-    const over = Number(rates[0]?.rides_over_limit_count || 0);
-    if ((limit > 0 && count >= limit) || (over > 0 && limit > 0 && Math.max(0, count - limit) >= over)) {
-        await conn.query('UPDATE drivers SET overdue_since = COALESCE(overdue_since, NOW()) WHERE id = ? AND overdue_since IS NULL', [ride.Driver_ID_Fk]);
-    }
     return completionWalletSummary(conn, ride, charge.deducted);
 }
 module.exports = { settleRideCompletion, completionWalletSummary };

@@ -60,3 +60,12 @@ test('history read failure returns an error and releases the connection',async()
   try {const res=await history();assert.equal(res.statusCode,500);assert.equal(res.body.success,false);assert.equal(released,2);}
   finally {console.error=oldError;failRead=false;}
 });
+
+
+test('retired clear-dues endpoint never resets earnings, balances or ride counters',async()=>{
+ const handler=router.stack.find(layer=>layer.route?.path==='/clear-overdue').route.stack.at(-1).handle;
+ const before=queries.length;
+ const res={json(body){this.body=body;return this;}};
+ await handler({user:{userId:42}},res);
+ assert.equal(res.body.success,true);assert.equal(res.body.overdue_info,null);assert.equal(queries.length,before);
+});

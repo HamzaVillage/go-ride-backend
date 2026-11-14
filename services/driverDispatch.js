@@ -77,7 +77,6 @@ async function getEligibleDriverIds(conn, ids, vehicleType) {
          WHERE d.id IN (${ids.map(() => '?').join(',')})
            AND LOWER(TRIM(d.status)) = 'active'
            AND LOWER(TRIM(d.vehicle_type)) = ? AND d.Is_Available = 1
-           AND (d.overdue_since IS NULL OR d.overdue_since > DATE_SUB(NOW(), INTERVAL 8 HOUR))
            AND NOT EXISTS (SELECT 1 FROM ride_history active
                WHERE active.Driver_ID_Fk = d.id AND active.Ride_Status IN ('Accepted','Arrived','Started','Ongoing'))`,
             [...ids, category(vehicleType)]

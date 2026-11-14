@@ -4,12 +4,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-async function fixture({ status = 'active', available = 1, busy = false, walletWait, recoveryWait } = {}) {
+async function fixture({ oldDues = false, walletBalance = 1000, status = 'active', available = 1, busy = false, walletWait, recoveryWait } = {}) {
     let connectionHandler;
     const events = new Map();
     const emitted = [];
     const rooms = new Set();
-    const driver = { id: 10, User_ID_FK: 10, status, Is_Available: available, vehicle_type: 'Mini', completed_rides_count: 0 };
+    const driver = { id: 10, User_ID_FK: 10, status, Is_Available: available, vehicle_type: 'Mini', completed_rides_count: oldDues ? 500 : 0, overdue_since: oldDues ? '2000-01-01 00:00:00' : null };
     const conn = { release() {}, async query(sql) {
         if (sql.includes('FROM drivers')) return [[driver]];
         if (sql.includes('FROM vehicle_fare_rate')) return [[]];
@@ -35,7 +35,7 @@ async function fixture({ status = 'active', available = 1, busy = false, walletW
             return conn;
         } },
         '../services/driverDispatch': require('../services/driverDispatch'),
-        '../utils/driverHelper': { getDriverWalletBalance: async () => { if (walletWait) await walletWait; return 1000; }, getVehicleMinWalletLimit: async () => 300 },
+        '../utils/driverHelper': { getDriverWalletBalance: async () => { if (walletWait) await walletWait; return walletBalance; }, getVehicleMinWalletLimit: async () => 300 },
     };
     const context = { module: { exports: {} }, require: id => {
         if (!(id in dependencies)) throw new Error(`Unexpected dependency ${id}`);
@@ -120,4 +120,14 @@ test('offline during an in-flight online request cannot bring driver online agai
     assert.equal(f.socket.data.driverPresence, null);
     assert.equal(f.rooms.has('vehicle:mini'), false);
     assert.equal(f.emitted.length, 0);
+});
+
+
+test('legacy ride-count dues do not block online presence',async()=>{
+ const f=await fixture({oldDues:true});await f.event('driver:online',{lat:24.86,lng:67});
+ assert.equal(f.emitted.at(-1).payload.success,true);assert.equal(f.socket.data.driverPresence.driverId,10);
+});
+test('retiring dues preserves the minimum wallet requirement',async()=>{
+ const f=await fixture({oldDues:true,walletBalance:0});await f.event('driver:online',{lat:24.86,lng:67});
+ assert.equal(f.emitted.at(-1).payload.success,false);assert.equal(f.emitted.at(-1).payload.topup_required,true);
 });

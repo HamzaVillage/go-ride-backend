@@ -174,7 +174,7 @@ function initSocket(server) {
                 const conn = await pool.getConnection();
                 try {
                     const [rows] = await conn.query(
-                        "SELECT id, User_ID_FK, vehicle_type, status, Is_Available, overdue_since, completed_rides_count FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
+                        "SELECT id, User_ID_FK, vehicle_type, status, Is_Available FROM drivers WHERE User_ID_FK = ? OR REPLACE(phone, '-', '') = REPLACE(?, '-', '')",
                         [userId || 0, phone]
                     );
                     if (rows.length === 0) {
@@ -205,40 +205,6 @@ function initSocket(server) {
                             message: `Your wallet balance (Rs. ${wallet_balance.toFixed(2)}) is below the required minimum (Rs. ${min_wallet_balance.toFixed(2)}). Please top up your wallet to go online.`
                         });
                         return;
-                    }
-
-                    const totalRides = parseInt(driver.completed_rides_count || 0, 10);
-                    let vehicleRidesLimit = 0;
-                    let vehicleRidesOverLimitCount = 0;
-                    if (driver.vehicle_type) {
-                        const [rateRows] = await conn.query(
-                            "SELECT rides_limit, rides_over_limit_count FROM vehicle_fare_rate WHERE Vehicle_Type = ? AND Is_Active = 1 LIMIT 1",
-                            [driver.vehicle_type]
-                        );
-                        vehicleRidesLimit = parseInt(rateRows[0]?.rides_limit ?? 0, 10);
-                        vehicleRidesOverLimitCount = parseInt(rateRows[0]?.rides_over_limit_count ?? 0, 10);
-                    }
-                    const ridesBeyondMax = vehicleRidesLimit > 0 ? Math.max(0, totalRides - vehicleRidesLimit) : 0;
-                    const meetsLimit = (vehicleRidesLimit > 0 && totalRides >= vehicleRidesLimit) ||
-                        (vehicleRidesOverLimitCount > 0 && ridesBeyondMax >= vehicleRidesOverLimitCount);
-
-                    if (meetsLimit) {
-                        if (!driver.overdue_since) {
-                            await conn.query("UPDATE drivers SET overdue_since = NOW() WHERE id = ? AND overdue_since IS NULL", [driver.id]);
-                        }
-                        const [overdueCheck] = await conn.query(
-                            "SELECT TIMESTAMPDIFF(HOUR, overdue_since, NOW()) as hours_overdue FROM drivers WHERE id = ?",
-                            [driver.id]
-                        );
-                        const hoursOverdue = parseInt(overdueCheck[0]?.hours_overdue ?? 0, 10);
-                        if (hoursOverdue >= 8) {
-                            acknowledge({
-                                success: false,
-                                message: "Your account is blocked. Please clear your dues to continue finding rides.",
-                                blocked: true
-                            });
-                            return;
-                        }
                     }
 
                     if (!socket.connected || socket.onlineVersion !== requestVersion) return;
