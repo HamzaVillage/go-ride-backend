@@ -30,7 +30,7 @@ test('validation rejects unsafe or inconsistent settings before acquiring a conn
         const next = document(); mutate(next); await assert.rejects(service.update(7, { version: 'a'.repeat(64), configuration: next }), { status: 400 });
     }
 });
-function fixture({ failAudit = false, policyMissing = false, auditMissing = false } = {}) {
+function fixture({ failAudit = false, policyMissing = false, auditMissing = false, feeColumnsMissing = false } = {}) {
     const state = { configuration: document(), commits: 0, rollbacks: 0, released: 0, updates: 0, audits: [] }; let pending;
     const conn = {
         async beginTransaction() { pending = structuredClone(state.configuration); },
@@ -41,10 +41,10 @@ function fixture({ failAudit = false, policyMissing = false, auditMissing = fals
             if (sql.includes('FROM employee WHERE')) return [[{emp_id:7,account_type:'superadmin',is_active:1,is_deleted:0}]];
             if (sql.startsWith('SELECT') && sql.includes('FROM sysconfigsetup')) return [[current.services]];
             if (sql.startsWith('SELECT') && sql.includes('FROM fare_policy')) { if (policyMissing) throw Object.assign(new Error('missing optional policy'), { code: 'ER_NO_SUCH_TABLE' }); return [[{ policy_json: JSON.stringify(current.policy) }]]; }
-            if (sql.startsWith('SELECT') && sql.includes('FROM vehicle_fare_rate')) return [current.rates];
+            if (sql.startsWith('SELECT') && sql.includes('FROM vehicle_fare_rate')) return [current.rates.map(rate => { if (!feeColumnsMissing) return rate; const { Platform_Fee_RS, Platform_Fee_Is_Percentage, ...legacy } = rate; return legacy; })];
             if (sql.startsWith('UPDATE sysconfigsetup')) { CONFIG_KEYS.forEach((key, i) => pending.services[key] = args[i]); state.updates++; return [{}]; }
             if (sql.startsWith('UPDATE fare_policy')) { pending.policy = JSON.parse(args[0]); return [{}]; }
-            if (sql.startsWith('UPDATE vehicle_fare_rate')) { const keys = ['Is_Active', ...Object.keys(RATE_FIELDS)]; const target = pending.rates.find(item => item.Rate_ID_Pk === args.at(-1)); keys.forEach((key, i) => target[key] = args[i]); return [{}]; }
+            if (sql.startsWith('UPDATE vehicle_fare_rate')) { const keys = ['Is_Active', ...Object.keys(RATE_FIELDS).filter(key => !feeColumnsMissing || key !== 'Platform_Fee_RS'), ...(!feeColumnsMissing ? ['Platform_Fee_Is_Percentage'] : [])]; const target = pending.rates.find(item => item.Rate_ID_Pk === args.at(-1)); keys.forEach((key, i) => target[key] = args[i]); return [{}]; }
             if (sql.startsWith('INSERT INTO admin_setting_audit')) { if (auditMissing) throw Object.assign(new Error('missing optional audit'), { code: 'ER_NO_SUCH_TABLE' }); if (failAudit) throw new Error('audit failed'); state.audits.push(args); return [{}]; }
             throw new Error(`Unexpected query: ${sql}`);
         },
@@ -116,4 +116,35 @@ test('unsupported custom time changes are rejected explicitly without blocking o
     const next = structuredClone(loaded.configuration); next.policy.peak_windows[0].start = '07:30'; next.rates[0].Base_Fare = 140;
     await assert.rejects(f.service.update(7, { version: loaded.version, configuration: next }), error => error.status === 400 && /surcharge percentages can still be updated/.test(error.message));
     assert.equal(f.state.updates, 0); assert.equal(f.state.configuration.rates[0].Base_Fare, 100);
+});
+
+test('platform fee mode and PKR value save atomically and enter the admin audit', async () => {
+    const f = fixture(); const loaded = await f.service.get();
+    const next = structuredClone(loaded.configuration);
+    next.rates[0].Platform_Fee_Is_Percentage = false;
+    next.rates[0].Platform_Fee_RS = 15;
+    const saved = await f.service.update(7, { version: loaded.version, configuration: next });
+    assert.equal(saved.configuration.rates[0].Platform_Fee_Is_Percentage, false);
+    assert.equal(saved.configuration.rates[0].Platform_Fee_RS, 15);
+    assert.equal(saved.configuration.rates[0].Fee_Percentage, 10);
+    assert.equal(JSON.parse(f.state.audits[0][2]).rates[0].Platform_Fee_Is_Percentage, false);
+    assert.equal(f.state.commits, 2);
+});
+test('fee mode rejects non-boolean values and fixed fees reject negative amounts', () => {
+    for (const value of [0,1,'fixed','false',null]) {
+        const d = document(); d.rates[0].Platform_Fee_Is_Percentage = value;
+        assert.throws(() => normalizeSettings(d), { status:400 });
+    }
+    const d = document(); d.rates[0].Platform_Fee_RS = -1;
+    assert.throws(() => normalizeSettings(d), { status:400 });
+});
+
+test('missing fee columns preserve legacy percentage pricing and block mode changes with a setup message',async()=>{
+    const f=fixture({feeColumnsMissing:true});const loaded=await f.service.get();
+    assert.equal(loaded.capabilities.platform_fee_editable,false);assert.equal(loaded.configuration.rates[0].Platform_Fee_Is_Percentage,true);
+    const normal=structuredClone(loaded.configuration);normal.rates[0].Base_Fare=120;
+    const saved=await f.service.update(7,{version:loaded.version,configuration:normal});assert.equal(saved.configuration.rates[0].Base_Fare,120);
+    const fixed=structuredClone(saved.configuration);fixed.rates[0].Platform_Fee_Is_Percentage=false;
+    await assert.rejects(f.service.update(7,{version:saved.version,configuration:fixed}),{status:503});
+    assert.equal(f.state.configuration.rates[0].Platform_Fee_Is_Percentage,true);
 });

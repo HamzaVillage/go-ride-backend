@@ -17,7 +17,9 @@
     "setup:city-to-city-wallet": "node scripts/configureCityToCityWallet.js",
     "setup:mobile-auth": "node scripts/configureMobileAuth.js",
     "audit:driver-user-links": "node scripts/auditDriverUserLinks.js",
-    "setup:driver-user-links": "node scripts/configureDriverUserLinks.js"
+    "setup:driver-user-links": "node scripts/configureDriverUserLinks.js",
+    "setup:platform-fees": "node scripts/configurePlatformFees.js",
+    "setup:offers": "node scripts/configureOffers.js"
   },
   "keywords": [],
   "dependencies": {

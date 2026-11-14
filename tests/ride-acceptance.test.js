@@ -102,6 +102,8 @@ function fixture({ failUpdate = false, failCommit = false, wallet = 1000, presen
         return conn;
     }};
     const dependencies = {
+        '../services/offers': require('../services/offers'),
+        '../services/platformFee': require('../services/platformFee'),
         '../services/rideCompletionSettlement': require('../services/rideCompletionSettlement'),
         '../services/rideChatService': require('../services/rideChatService'),
         '../services/redisCache': require('../services/redisCache'),

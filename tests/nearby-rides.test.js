@@ -24,6 +24,8 @@ async function request({ offline = false, stale = false, status = 'active', avai
         throw new Error(`Unexpected SQL: ${sql}`);
     } };
     const dependencies = {
+        '../services/offers': require('../services/offers'),
+        '../services/platformFee': require('../services/platformFee'),
         '../services/rideCompletionSettlement': require('../services/rideCompletionSettlement'),
         '../services/rideChatService': require('../services/rideChatService'),
         '../services/redisCache': require('../services/redisCache'),

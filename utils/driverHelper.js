@@ -31,7 +31,7 @@ const getDriverWalletBalance = async (conn, driverId, userIdFk = null, { strict 
         if (!Number.isFinite(balance)) throw new Error('Invalid driver wallet balance');
         return Number(balance.toFixed(2));
     } catch (err) {
-        if (strict) throw err;
+        if (strict || require('../services/offers').enabled()) throw err;
         console.warn('Error calculating driver wallet balance:', err.message);
         return 0;
     }
@@ -41,7 +41,7 @@ const getDriverWalletBalance = async (conn, driverId, userIdFk = null, { strict 
  * Get dynamic minimum wallet balance limit for a vehicle category from vehicle_fare_rate
  * (reads rides_over_limit_count which holds the required PKR amount, default 300.00)
  */
-const getVehicleMinWalletLimit = async (conn, vehicleType, { strict = false } = {}) => {
+const getVehicleMinWalletLimit = async (conn, vehicleType, { strict = false, driver = null, balance = null } = {}) => {
     let minBalance = 300.00;
     if (!vehicleType) return minBalance;
     try {
@@ -56,6 +56,7 @@ const getVehicleMinWalletLimit = async (conn, vehicleType, { strict = false } = 
         if (strict) throw err;
         console.warn("Error fetching vehicle min wallet limit:", err.message);
     }
+    if (driver && balance != null && await require('../services/offers').driverBenefit(conn,driver,balance)) return 0;
     return parseFloat(minBalance.toFixed(2));
 };
 

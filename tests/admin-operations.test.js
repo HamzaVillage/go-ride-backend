@@ -319,6 +319,7 @@ test("franchise creates driver and linked mobile user atomically under its own I
   const user = f.state.queries.find((q) =>
     q.sql.startsWith("INSERT INTO users"),
   );
+  assert.equal(user.args[3], "rider");
   assert.equal(user.args[5], 5);
   assert.equal(user.args[6], "Karachi");
   assert.equal(user.args[7], "Test address");

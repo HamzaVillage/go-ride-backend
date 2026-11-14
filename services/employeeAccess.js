@@ -9,6 +9,7 @@ const SCREENS = Object.freeze([
     ['city_to_city_routes','City-to-City Route Fares','/city-to-city/routes'],
     ['city_to_city_calculator','City-to-City Fare Calculator','/city-to-city/calculator'],
     ['franchise_members','Franchise Drivers & Riders','/franchise-members'],
+    ['offers','Offers','/offers'],
 ]);
 const fail = (status, message) => Object.assign(new Error(message), { status });
 async function getAccess(conn, employeeId, { lock = false } = {}) {

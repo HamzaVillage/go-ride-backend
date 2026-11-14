@@ -1,3 +1,5 @@
+const { createAdminOffers } = require('../services/adminOffers');
+const { createDriverRegistrationRouter } = require('./adminDriverRegistration');
 const express = require('express');
 const { createSettingsRouter } = require('./adminSettings');
 const { createAccessMiddleware } = require('../services/employeeAccess');
@@ -14,6 +16,7 @@ const { createAdminDriversService } = require('../services/adminDrivers');
 const { createAdminOverviewService } = require('../services/adminOverview');
 function createAdminRouter(pool, { backup } = {}) {
     const router = express.Router(); const service = createAdminDriversService(pool);
+    const offers = createAdminOffers(pool);
     const overview = createAdminOverviewService(pool);
     const directories = createAdminDirectoriesService(pool);
     const franchises = createAdminFranchisesService(pool);
@@ -30,10 +33,14 @@ function createAdminRouter(pool, { backup } = {}) {
     router.get('/me', createAccessMiddleware(pool), respond(req => req.access));
     router.use('/employees', createAccessMiddleware(pool, 'employees'), createEmployeeRouter(pool));
     router.use((req, res, next) => {
-        const screen = { 'city-to-city-drivers': 'city_to_city_drivers', 'city-to-city-fares': 'city_to_city_fares', 'city-to-city-routes': 'city_to_city_routes', 'city-to-city-calculator': 'city_to_city_calculator', 'franchise-members': 'franchise_members', drivers: 'drivers', overview: 'overview', rides: 'rides', riders: 'riders', franchises: 'franchises', support: 'support', settings: 'settings' }[req.path.split('/')[1]];
+        const screen = { 'city-to-city-drivers': 'city_to_city_drivers', 'city-to-city-fares': 'city_to_city_fares', 'city-to-city-routes': 'city_to_city_routes', 'city-to-city-calculator': 'city_to_city_calculator', 'franchise-members': 'franchise_members', offers: 'offers', drivers: 'drivers', overview: 'overview', rides: 'rides', riders: 'riders', franchises: 'franchises', support: 'support', settings: 'settings' }[req.path.split('/')[1]];
         if (!screen) return res.status(404).json({ success: false, message: 'Unknown admin endpoint.' });
         return createAccessMiddleware(pool, screen)(req, res, next);
     });
+    router.get('/offers', respond(req => offers.list(req.user.employeeId)));
+    router.post('/offers', respond(req => offers.save(req.user.employeeId,null,req.body)));
+    router.patch('/offers/:id', respond(req => offers.save(req.user.employeeId,req.params.id,req.body)));
+    router.get('/offers/:id/usage', respond(req => offers.usage(req.user.employeeId,req.params.id,req.query.page)));
     router.get('/city-to-city-fares', respond(() => intercity.services()));
     router.patch('/city-to-city-fares/:id', respond(req => intercity.save('services',req.params.id,req.user.employeeId,req.body)));
     router.get('/city-to-city-routes', respond(() => intercity.routes()));
@@ -45,6 +52,8 @@ function createAdminRouter(pool, { backup } = {}) {
     router.post('/franchise-members', respond(req => members.create(req.user.employeeId,req.body)));
     router.put('/franchise-members/scope', respond(req => members.assign(req.user.employeeId,req.body)));
     router.use('/settings', createSettingsRouter(pool, { backup }));
+    router.use('/drivers', createDriverRegistrationRouter(pool, 'normal'));
+    router.use('/city-to-city-drivers', createDriverRegistrationRouter(pool, 'city_to_city'));
     router.use('/drivers', createDriverProfileRouter(pool));
     router.use('/city-to-city-drivers', createAdminCityToCityRouter(pool));
     router.get('/drivers', respond(req => service.list(req.query)));

@@ -139,7 +139,7 @@ test("one password-free OTP login restores each server-selected mode and canonic
       password: "ignored",
     });
     assert.equal(sent.otp, undefined);
-    assert.equal(f.state.otp.otp_hash, hash("123456"));
+    assert.equal(f.state.otp.otp_hash, "123456");
     const r = await f.verify();
     assert.equal(r.active_mode, mode);
     assert.equal(r.user.id, 42);
@@ -266,4 +266,11 @@ test('legacy mixed-case active status restores the existing driver dashboard and
  for(const status of ['Active','ACTIVE',' active ']){
   const f=fixture({mode:'driver',driver:true,status});await f.service.send({phone:'03001234567'});const s=await f.verify();assert.equal(s.profile.status,'active');assert.equal(s.driver_application_only,false);assert.equal(s.needs_onboarding,false);assert.equal(f.state.claims.role,'driver');
  }
+});
+
+test("unexpired hashed mobile OTPs remain valid during deployment", async () => {
+  const f = fixture();
+  await f.service.send({ phone: "03001234567" });
+  f.state.otp.otp_hash = hash("123456");
+  assert.equal((await f.verify()).user.id, 42);
 });

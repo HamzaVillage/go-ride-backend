@@ -22,7 +22,7 @@ async function debitDriverForRide(conn, { rideId, driverId, amount }) {
     await conn.query(
         `INSERT INTO driver_wallet (driver_id, transaction_type, amount, description, reference_id, payment_method, status, created_at)
          VALUES (?, 'debit', ?, ?, ?, 'other', 'completed', NOW())`,
-        [driverId, deduction, `Wallet deduction for Ride #${rideId}`, reference]
+        [driverId, deduction, `Platform fee for Ride #${rideId}`, reference]
     );
     return { deducted: deduction, already_applied: false };
 }

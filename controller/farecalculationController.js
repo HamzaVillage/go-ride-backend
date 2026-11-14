@@ -50,7 +50,9 @@ const farecalculationController = {
                         per_minute_rate: rate.Per_Minute_Rate,
                         night_charge_percent: rate.Night_Charge_Percent,
                         peak_hour_percent: rate.Peak_Hours_Percent,
-                        fee_percentage: rate.Fee_Percentage
+                        fee_percentage: calc.fee_percentage,
+                        platform_fee_mode: calc.platform_fee_mode,
+                        platform_fee_rs: Number(rate.Platform_Fee_RS || 0)
                     }
                 };
 
@@ -128,8 +130,9 @@ const farecalculationController = {
             if (calc.organization_fee > 0) {
                 breakdown.organization_fee = {
                     amount: calc.organization_fee,
-                    description: `Organization Fee (${rate.Fee_Percentage}%)`,
-                    percentage: `${rate.Fee_Percentage}%`
+                    description: calc.platform_fee_mode === 'fixed' ? 'Platform Fee (fixed PKR)' : `Platform Fee (${calc.fee_percentage}%)`,
+                    mode: calc.platform_fee_mode,
+                    percentage: calc.platform_fee_mode === 'fixed' ? null : `${calc.fee_percentage}%`
                 };
             }
 

@@ -101,6 +101,8 @@ async function statusRequest({ owned = true, age = 0 } = {}) {
         return [owned ? [ride(age)] : []];
     } };
     const dependencies = {
+        '../services/offers': require('../services/offers'),
+        '../services/platformFee': require('../services/platformFee'),
         '../services/rideCompletionSettlement': require('../services/rideCompletionSettlement'),
         '../services/rideChatService': require('../services/rideChatService'),
         '../services/redisCache': require('../services/redisCache'),

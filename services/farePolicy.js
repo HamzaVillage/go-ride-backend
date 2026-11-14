@@ -1,3 +1,4 @@
+const { addedPlatformFee } = require('./platformFee');
 const { fail } = require('./employeeAccess');
 const DEFAULT_POLICY = Object.freeze({
     peak_enabled: true,
@@ -68,9 +69,10 @@ function calculateEstimatedFare(rate, distance, duration, isPeak, isNight, waiti
     const subtotal = base_fare + distance_fare + time_fare + waiting_charges;
     const night_charge = isNight ? subtotal * Number(rate.Night_Charge_Percent || 0) / 100 : 0;
     const peak_hour_surcharge = isPeak ? subtotal * Number(rate.Peak_Hours_Percent || 0) / 100 : 0;
-    const fee_percentage = Number(rate.Fee_Percentage || 0), organization_fee = (subtotal + night_charge + peak_hour_surcharge) * fee_percentage / 100;
+    const platformFee = addedPlatformFee(rate, subtotal + night_charge + peak_hour_surcharge);
+    const fee_percentage = platformFee.percentage, organization_fee = platformFee.fee;
     const cents = (subtotal + night_charge + peak_hour_surcharge + organization_fee) * 100;
     const increment = Math.round(policy.round_to * 100);
-    return { total_fare: Math.ceil((cents - 1e-7) / increment) * increment / 100, base_fare, distance_fare, time_fare, waiting_charges, night_charge, peak_hour_surcharge, fee_percentage, organization_fee, additional_kms: extra, billed_distance: billedDistance };
+    return { total_fare: Math.ceil((cents - 1e-7) / increment) * increment / 100, base_fare, distance_fare, time_fare, waiting_charges, night_charge, peak_hour_surcharge, fee_percentage, organization_fee, platform_fee_mode: platformFee.mode, additional_kms: extra, billed_distance: billedDistance };
 }
 module.exports = { DEFAULT_POLICY, validatePolicy, loadFarePolicy, scheduleStatus, calculateEstimatedFare, decimal };

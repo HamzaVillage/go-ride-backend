@@ -1,7 +1,6 @@
-const { createHash, timingSafeEqual } = require('node:crypto');
+const { matchesOtp } = require('./otpValue');
 const { fail } = require('./cityToCityDrivers');
 const PURPOSE = 'city_to_city_login';
-const digest = value => createHash('sha256').update(value).digest('hex');
 function phoneNumber(value) {
     if (typeof value !== 'string') throw fail(400, 'Enter a valid mobile number.');
     let phone = value.replace(/[\s()-]/g, '');
@@ -28,7 +27,7 @@ function createCityToCityAuth({ pool, sendOtp, signToken }) {
                 const otp = String(await sendOtp(phone));
                 if (!/^\d{6}$/.test(otp)) throw fail(502, 'Unable to send a verification code. Try again.');
                 await conn.query('DELETE FROM otp_verifications WHERE phone_number=? AND purpose=?', [phone, PURPOSE]);
-                await conn.query('INSERT INTO otp_verifications (phone_number,otp_hash,purpose,expires_at) VALUES (?,?,?,DATE_ADD(NOW(),INTERVAL 10 MINUTE))', [phone,digest(otp),PURPOSE]);
+                await conn.query('INSERT INTO otp_verifications (phone_number,otp_hash,purpose,expires_at) VALUES (?,?,?,DATE_ADD(NOW(),INTERVAL 10 MINUTE))', [phone,otp,PURPOSE]);
                 return { message: 'Verification code sent.' };
             });
         },
@@ -40,8 +39,8 @@ function createCityToCityAuth({ pool, sendOtp, signToken }) {
                 const owner = await findOwner(conn, phone);
                 const [rows] = await conn.query('SELECT id,otp_hash,attempts FROM otp_verifications WHERE phone_number=? AND purpose=? AND verified=0 AND expires_at > NOW() ORDER BY id DESC LIMIT 1 FOR UPDATE', [phone,PURPOSE]);
                 if (!rows.length || Number(rows[0].attempts) >= 5) return { invalid: true };
-                const record = rows[0], submitted = Buffer.from(digest(body.otp)), expected = Buffer.from(record.otp_hash);
-                if (submitted.length !== expected.length || !timingSafeEqual(submitted, expected)) {
+                const record = rows[0];
+                if (!matchesOtp(body.otp, record.otp_hash)) {
                     await conn.query('UPDATE otp_verifications SET attempts=COALESCE(attempts,0)+1 WHERE id=?', [record.id]);
                     return { invalid: true };
                 }

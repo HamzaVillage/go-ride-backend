@@ -114,6 +114,35 @@ function createCityToCityDrivers(pool) {
         await conn.query("UPDATE city_to_city_drivers SET application_status='pending',is_online=0,approved_by=NULL,approved_at=NULL,rejection_reason=NULL WHERE id=?",[profile.id]);
         await conn.query("UPDATE city_to_city_driver_services SET is_enabled=0,approval_status=IF(approval_status='suspended','suspended','pending') WHERE city_to_city_driver_id=?",[profile.id]);
     }
+    async function registerOnConnection(conn, userId, body, files = {}) {
+        const data = validateApplication(body);
+        await user(conn, userId, true);
+        const [existing] = await conn.query('SELECT id, application_status FROM city_to_city_drivers WHERE user_id = ? FOR UPDATE', [userId]);
+        if (existing.length && existing[0].application_status === 'pending') return { ...await account(conn, userId), already_submitted: true };
+        if (existing.length && !['draft','rejected'].includes(existing[0].application_status)) throw fail(409, 'This application cannot be resubmitted. Contact support.');
+        const [cities] = await conn.query('SELECT ID_PK FROM city WHERE ID_PK = ?', [data.cityId]);
+        if (!cities.length) throw fail(400, 'Select a valid city.');
+        const [services] = await conn.query(`SELECT id, code FROM city_to_city_services WHERE is_active = 1 AND code IN (${data.services.map(() => '?').join(',')})`, data.services);
+        if (services.length !== data.services.length) throw fail(400, 'One of the selected services is unavailable. Refresh and try again.');
+        const values = [data.cityId, data.name, data.father, data.cnic, data.dob, data.address, data.easypaisa, data.jazzcash];
+        let driverId = existing[0]?.id;
+        if (driverId) {
+            await conn.query("UPDATE city_to_city_drivers SET home_city_id=?, full_name=?, father_name=?, cnic=?, dob=?, address=?, easypaisa=?, jazzcash=?, application_status='pending', rejection_reason=NULL, approved_by=NULL, approved_at=NULL, is_online=0 WHERE id=?", [...values, driverId]);
+            await conn.query('UPDATE city_to_city_vehicles SET is_active = 0 WHERE city_to_city_driver_id = ?', [driverId]);
+            await conn.query("UPDATE city_to_city_driver_services SET is_enabled = 0, approval_status='suspended' WHERE city_to_city_driver_id = ?", [driverId]);
+        } else {
+            const [result] = await conn.query("INSERT INTO city_to_city_drivers (user_id,driver_code,home_city_id,full_name,father_name,cnic,dob,address,easypaisa,jazzcash,application_status) VALUES (?,?,?,?,?,?,?,?,?,?,'pending')", [userId, `CTP_${randomUUID().slice(0, 20)}`, ...values]);
+            driverId = result.insertId;
+            await conn.query('UPDATE city_to_city_drivers SET driver_code=? WHERE id=?',[formatCityToCityDriverCode(driverId),driverId]);
+        }
+        const [vehicle] = await conn.query("INSERT INTO city_to_city_vehicles (city_to_city_driver_id,vehicle_type,make,model,manufacture_year,registration_number,color,passenger_capacity,max_parcel_weight_kg) VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE vehicle_type=VALUES(vehicle_type),make=COALESCE(VALUES(make),make),model=VALUES(model),manufacture_year=COALESCE(VALUES(manufacture_year),manufacture_year),color=VALUES(color),passenger_capacity=VALUES(passenger_capacity),max_parcel_weight_kg=VALUES(max_parcel_weight_kg),approval_status='pending',is_active=1,id=LAST_INSERT_ID(id)", [driverId,data.vehicleType,data.make,data.model,data.year,data.plate,data.color,data.seats,data.weight]);
+        for (const service of services) await conn.query("INSERT INTO city_to_city_driver_services (city_to_city_driver_id,service_id,service_type) VALUES (?,?,?) ON DUPLICATE KEY UPDATE approval_status='pending',is_enabled=0", [driverId,service.id,service.code]);
+        for (const [field, type] of Object.entries(DOCUMENT_TYPES)) {
+            const file = files[field]?.[0];
+            if (file) await conn.query('INSERT INTO city_to_city_driver_documents (city_to_city_driver_id,vehicle_id,document_type,file_key) VALUES (?,?,?,?)', [driverId, type === 'vehicle_registration' ? vehicle.insertId : null, type, file.storedPath || file.filename]);
+        }
+        return await account(conn, userId);
+    }
     return {
         async options(userId, {withSource=true} = {}) { const conn = await pool.getConnection(); try { const owner = await user(conn, userId); const driver = withSource ? await sourceDriver(conn,owner) : null; const savedVehicle=driver?{vehicle_type:driver.vehicle_type,model:driver.vehicle_model,registration_number:driver.vehicle_number,color:driver.vehicle_color}:null; const [cities] = await conn.query('SELECT ID_PK, City_Name FROM city ORDER BY City_Name'); const [services] = await conn.query("SELECT id, code, name FROM city_to_city_services WHERE is_active = 1 ORDER BY sort_order"); return { cities, services, vehicle_types: VEHICLE_TYPES, existing_vehicle:savedVehicle, requires_new_vehicle:!validSavedCar(savedVehicle), existing_documents:driver?Object.entries({Photo:'photo_path',CNIC_Front:'cnic_front_path',CNIC_Back:'cnic_back_path',License:'license_path'}).filter(([,key])=>Boolean(driver[key])).map(([field])=>field):[] }; } finally { conn.release(); } },
         async account(userId) { const conn = await pool.getConnection(); try { return await account(conn, userId); } finally { conn.release(); } },
@@ -150,36 +179,10 @@ function createCityToCityDrivers(pool) {
                 return await account(conn,userId);
             });
         },
+        registerOnConnection,
         async register(userId, body, files = {}) {
-            const data = validateApplication(body);
-            return transaction(async conn => {
-                await user(conn, userId, true);
-                const [existing] = await conn.query('SELECT id, application_status FROM city_to_city_drivers WHERE user_id = ? FOR UPDATE', [userId]);
-                if (existing.length && existing[0].application_status === 'pending') return { ...await account(conn, userId), already_submitted: true };
-                if (existing.length && !['draft','rejected'].includes(existing[0].application_status)) throw fail(409, 'This application cannot be resubmitted. Contact support.');
-                const [cities] = await conn.query('SELECT ID_PK FROM city WHERE ID_PK = ?', [data.cityId]);
-                if (!cities.length) throw fail(400, 'Select a valid city.');
-                const [services] = await conn.query(`SELECT id, code FROM city_to_city_services WHERE is_active = 1 AND code IN (${data.services.map(() => '?').join(',')})`, data.services);
-                if (services.length !== data.services.length) throw fail(400, 'One of the selected services is unavailable. Refresh and try again.');
-                const values = [data.cityId, data.name, data.father, data.cnic, data.dob, data.address, data.easypaisa, data.jazzcash];
-                let driverId = existing[0]?.id;
-                if (driverId) {
-                    await conn.query("UPDATE city_to_city_drivers SET home_city_id=?, full_name=?, father_name=?, cnic=?, dob=?, address=?, easypaisa=?, jazzcash=?, application_status='pending', rejection_reason=NULL, approved_by=NULL, approved_at=NULL, is_online=0 WHERE id=?", [...values, driverId]);
-                    await conn.query('UPDATE city_to_city_vehicles SET is_active = 0 WHERE city_to_city_driver_id = ?', [driverId]);
-                    await conn.query("UPDATE city_to_city_driver_services SET is_enabled = 0, approval_status='suspended' WHERE city_to_city_driver_id = ?", [driverId]);
-                } else {
-                    const [result] = await conn.query("INSERT INTO city_to_city_drivers (user_id,driver_code,home_city_id,full_name,father_name,cnic,dob,address,easypaisa,jazzcash,application_status) VALUES (?,?,?,?,?,?,?,?,?,?,'pending')", [userId, `CTP_${randomUUID().slice(0, 20)}`, ...values]);
-                    driverId = result.insertId;
-                    await conn.query('UPDATE city_to_city_drivers SET driver_code=? WHERE id=?',[formatCityToCityDriverCode(driverId),driverId]);
-                }
-                const [vehicle] = await conn.query("INSERT INTO city_to_city_vehicles (city_to_city_driver_id,vehicle_type,make,model,manufacture_year,registration_number,color,passenger_capacity,max_parcel_weight_kg) VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE vehicle_type=VALUES(vehicle_type),make=COALESCE(VALUES(make),make),model=VALUES(model),manufacture_year=COALESCE(VALUES(manufacture_year),manufacture_year),color=VALUES(color),passenger_capacity=VALUES(passenger_capacity),max_parcel_weight_kg=VALUES(max_parcel_weight_kg),approval_status='pending',is_active=1,id=LAST_INSERT_ID(id)", [driverId,data.vehicleType,data.make,data.model,data.year,data.plate,data.color,data.seats,data.weight]);
-                for (const service of services) await conn.query("INSERT INTO city_to_city_driver_services (city_to_city_driver_id,service_id,service_type) VALUES (?,?,?) ON DUPLICATE KEY UPDATE approval_status='pending',is_enabled=0", [driverId,service.id,service.code]);
-                for (const [field, type] of Object.entries(DOCUMENT_TYPES)) {
-                    const file = files[field]?.[0];
-                    if (file) await conn.query('INSERT INTO city_to_city_driver_documents (city_to_city_driver_id,vehicle_id,document_type,file_key) VALUES (?,?,?,?)', [driverId, type === 'vehicle_registration' ? vehicle.insertId : null, type, file.storedPath || file.filename]);
-                }
-                return await account(conn, userId);
-            });
+            validateApplication(body);
+            return transaction(conn => registerOnConnection(conn, userId, body, files));
         },
         async switchMode(userId, target) {
             if (!['rider','driver','city_to_city_driver'].includes(target)) throw fail(400, 'Invalid app mode.');

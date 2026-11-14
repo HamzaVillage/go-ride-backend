@@ -12,6 +12,9 @@ router.get('/:rideId/chat', authMiddleware, chat.noStore, chat.enabled, chat.his
 router.post('/:rideId/chat/messages', authMiddleware, chat.noStore, chat.enabled, chat.send);
 router.post('/:rideId/chat/report', authMiddleware, chat.noStore, chat.enabled, chat.report);
 
+const offers = require('../services/offers');
+router.post('/offers/quote', authMiddleware, async (req,res) => { let c;try { const pool=require('../db/Connect_Db');const userId=offers.enabled()?await offers.personalUser(pool,req.user):req.user.userId;c=await pool.getConnection();res.json({success:true,data:await offers.riderQuote(c,userId,req.body.fare,req.body)}); } catch(e) { res.status(e.status||503).json({success:false,message:e.status?e.message:'Unable to verify the current offer.'}); } finally { c?.release(); } });
+
 // Post a new ride (User)
 router.post('/create', authMiddleware, rideController.createRide);
 router.get('/search/:rideId', authMiddleware, rideController.getSearchStatus);

@@ -194,7 +194,7 @@ function initSocket(server) {
 
                     // Check dynamic minimum wallet limit from vehicle_fare_rate
                     const wallet_balance = await getDriverWalletBalance(conn, driver.id, driver.User_ID_FK);
-                    const min_wallet_balance = await getVehicleMinWalletLimit(conn, driver.vehicle_type || dbVehicleType);
+                    const min_wallet_balance = await getVehicleMinWalletLimit(conn, driver.vehicle_type || dbVehicleType, {driver,balance:wallet_balance});
 
                     if (wallet_balance < min_wallet_balance) {
                         acknowledge({

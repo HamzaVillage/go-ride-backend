@@ -5,11 +5,11 @@ const SERVICE_FLAGS = ['ride_service', 'courier_service', 'food_delivery_service
 const CONFIG_KEYS = [...SERVICE_FLAGS, 'dispatch_min_radius_km', 'dispatch_radius_km'];
 const RATE_FIELDS = {
     Base_Fare: ['Base fare', 999999.99], Per_Km_Rate: ['Per-km rate', 999999.99], Per_Minute_Rate: ['Per-minute rate', 999999.99],
-    Fee_Percentage: ['Organization fee', 100], Night_Charge_Percent: ['Night surcharge', 500, 0, true], Peak_Hours_Percent: ['Peak surcharge', 500, 0, true],
+    Fee_Percentage: ['Platform fee percentage', 100], Platform_Fee_RS: ['Fixed platform fee', 999999.99], Night_Charge_Percent: ['Night surcharge', 500, 0, true], Peak_Hours_Percent: ['Peak surcharge', 500, 0, true],
     Minimum_Distance: ['Minimum distance', 999.99], Maximum_Distance: ['Maximum distance', 9999.99, 0.01],
     rides_limit: ['Ride limit', 1000000, 0, true], rides_over_limit_count: ['Over-limit/wallet threshold', 1000000, 0, true],
 };
-const RATE_COLUMNS = ['Rate_ID_Pk', 'Vehicle_Type', 'Currency', 'Is_Active', ...Object.keys(RATE_FIELDS)];
+const RATE_COLUMNS = ['Rate_ID_Pk', 'Vehicle_Type', 'Currency', 'Is_Active', 'Platform_Fee_Is_Percentage', ...Object.keys(RATE_FIELDS)];
 function versionOf(document) { return createHash('sha256').update(JSON.stringify(document)).digest('hex'); }
 function normalizeSettings(value) {
     if (!value || Object.keys(value).some(key => !['services', 'policy', 'rates'].includes(key)) || !value.services || Object.keys(value.services).some(key => !CONFIG_KEYS.includes(key))) throw fail(400, 'Invalid settings document.');
@@ -24,8 +24,9 @@ function normalizeSettings(value) {
         const id = decimal(rate.Rate_ID_Pk, 'Rate ID', Number.MAX_SAFE_INTEGER, 1, true);
         if (seen.has(id)) throw fail(400, 'Vehicle rates must be unique.'); seen.add(id);
         if (typeof rate.Vehicle_Type !== 'string' || !rate.Vehicle_Type.trim() || rate.Vehicle_Type.length > 50 || rate.Currency !== 'PKR' || typeof rate.Is_Active !== 'boolean') throw fail(400, 'Vehicle name/currency cannot be changed here, and active status must be true or false.');
-        const result = { Rate_ID_Pk: id, Vehicle_Type: rate.Vehicle_Type, Currency: rate.Currency, Is_Active: rate.Is_Active };
-        for (const [key, [label, max, min = 0, integer = false]] of Object.entries(RATE_FIELDS)) result[key] = decimal(rate[key], label, max, min, integer);
+        if (rate.Platform_Fee_Is_Percentage !== undefined && typeof rate.Platform_Fee_Is_Percentage !== 'boolean') throw fail(400, 'Choose percentage or fixed platform fee.');
+        const result = { Rate_ID_Pk: id, Vehicle_Type: rate.Vehicle_Type, Currency: rate.Currency, Is_Active: rate.Is_Active, Platform_Fee_Is_Percentage: rate.Platform_Fee_Is_Percentage ?? true };
+        for (const [key, [label, max, min = 0, integer = false]] of Object.entries(RATE_FIELDS)) result[key] = decimal(key === 'Platform_Fee_RS' ? rate[key] ?? 0 : rate[key], label, max, min, integer);
         if (result.Minimum_Distance > result.Maximum_Distance) throw fail(400, 'Minimum billable distance cannot exceed maximum trip distance.');
         return result;
     }).sort((a, b) => a.Rate_ID_Pk - b.Rate_ID_Pk);
@@ -36,10 +37,10 @@ async function readSettings(conn, lock = false) {
     const [services] = await conn.query(`SELECT ${CONFIG_KEYS.join(',')} FROM sysconfigsetup WHERE SCS_ID_Pk = 1${lock ? ' FOR UPDATE' : ''}`);
     if (!services.length) throw fail(404, 'System configuration row 1 is missing.');
     const { policy, editable: policyEditable } = await loadFarePolicy(conn, { lock, withStorage: true });
-    const [rates] = await conn.query(`SELECT ${RATE_COLUMNS.join(',')} FROM vehicle_fare_rate ORDER BY Rate_ID_Pk${lock ? ' FOR UPDATE' : ''}`);
+    const [rates] = await conn.query(`SELECT * FROM vehicle_fare_rate ORDER BY Rate_ID_Pk${lock ? ' FOR UPDATE' : ''}`);
     const configuration = { services: Object.fromEntries(CONFIG_KEYS.map(key => [key, SERVICE_FLAGS.includes(key) ? Number(services[0][key]) === 1 : Number(services[0][key])])), policy,
-        rates: rates.map(rate => Object.fromEntries(RATE_COLUMNS.map(key => [key, key === 'Is_Active' ? Boolean(rate[key]) : ['Currency', 'Vehicle_Type'].includes(key) ? rate[key] || 'PKR' : Number(rate[key] ?? 0)]))) };
-    return { configuration, version: versionOf(configuration), capabilities: { policy_editable: policyEditable } };
+        rates: rates.map(rate => Object.fromEntries(RATE_COLUMNS.map(key => [key, ['Is_Active', 'Platform_Fee_Is_Percentage'].includes(key) ? Boolean(Number(rate[key] ?? (key === 'Platform_Fee_Is_Percentage' ? 1 : 0))) : ['Currency', 'Vehicle_Type'].includes(key) ? rate[key] || 'PKR' : Number(rate[key] ?? 0)]))) };
+    return { configuration, version: versionOf(configuration), capabilities: { policy_editable: policyEditable, platform_fee_editable: rates.every(rate => Object.hasOwn(rate, 'Platform_Fee_Is_Percentage') && Object.hasOwn(rate, 'Platform_Fee_RS')) } };
 }
 async function requireSettingsActor(conn, actor) {
     const access = await getAccess(conn, actor, { lock: true }); if (!access.functions.includes('settings')) throw fail(403, 'Settings access is required.');
@@ -58,7 +59,10 @@ function createAdminSettings(pool) {
                 if (next.rates.length !== current.configuration.rates.length || next.rates.some((rate, i) => rate.Rate_ID_Pk !== current.configuration.rates[i].Rate_ID_Pk || rate.Vehicle_Type !== current.configuration.rates[i].Vehicle_Type || rate.Currency !== current.configuration.rates[i].Currency)) throw fail(400, 'Vehicle identities cannot be added, renamed, or removed by this update.');
                 await conn.query(`UPDATE sysconfigsetup SET ${CONFIG_KEYS.map(key => `${key} = ?`).join(',')} WHERE SCS_ID_Pk = 1`, CONFIG_KEYS.map(key => next.services[key]));
                 if (JSON.stringify(next.policy) !== JSON.stringify(current.configuration.policy)) await conn.query('UPDATE fare_policy SET policy_json = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1', [JSON.stringify(next.policy), actor]);
-                const mutableFields = ['Is_Active', ...Object.keys(RATE_FIELDS)];
+                const feeEditable = current.capabilities.platform_fee_editable;
+                if (!feeEditable && next.rates.some((rate, i) => rate.Platform_Fee_Is_Percentage !== current.configuration.rates[i].Platform_Fee_Is_Percentage || rate.Platform_Fee_RS !== current.configuration.rates[i].Platform_Fee_RS)) throw fail(503, 'Install the platform fee mode migration before changing fee mode or fixed fees.');
+                if (feeEditable && body.configuration.rates.some(rate => !Object.hasOwn(rate, 'Platform_Fee_Is_Percentage'))) throw fail(400, 'Reload the updated admin panel before saving fee settings.');
+                const mutableFields = ['Is_Active', ...Object.keys(RATE_FIELDS).filter(key => feeEditable || key !== 'Platform_Fee_RS'), ...(feeEditable ? ['Platform_Fee_Is_Percentage'] : [])];
                 for (const rate of next.rates) {
                     const before = current.configuration.rates.find(item => item.Rate_ID_Pk === rate.Rate_ID_Pk);
                     if (mutableFields.every(key => rate[key] === before[key])) continue;

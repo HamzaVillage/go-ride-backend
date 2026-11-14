@@ -35,6 +35,8 @@ function fixture({ status = 'Started', failDeletion = false } = {}) {
         },
     };
     const dependencies = {
+        '../services/offers': require('../services/offers'),
+        '../services/platformFee': require('../services/platformFee'),
         '../services/rideCompletionSettlement': require('../services/rideCompletionSettlement'),
         '../services/rideChatService': { deleteRideChat, closeChatRoom() { assert.equal(active, false); assert.equal(state.messages.length, 0); closed++; } },
         crypto: require('node:crypto'), '../services/redisCache': {}, '../services/rideSearch': {}, '../services/driverDispatch': {},

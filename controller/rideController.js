@@ -1,3 +1,5 @@
+const offers = require('../services/offers');
+const { includedPlatformFee } = require('../services/platformFee');
 const { settleRideCompletion, completionWalletSummary } = require('../services/rideCompletionSettlement');
 const { deleteRideChat, closeChatRoom } = require('../services/rideChatService');
 const crypto = require('crypto');
@@ -20,16 +22,25 @@ const rideController = {
         } = req.body;
 
         // Always use the authenticated user's ID from JWT - never trust the body
-        const user_id = req.user.userId;
+        let user_id = req.user.userId;
 
         if (!user_id || !pickup_location || !drop_location || !validCoordinates(pickup_lat, pickup_lng) || !validCoordinates(drop_lat, drop_lng) || !category(vehicle_type)) {
             return res.status(400).json({ success: false, message: "Missing required fields for ride creation" });
         }
 
-        let conn;
+        let conn, transactionOpen = false, promotion;
         try {
+            if (offers.enabled()) user_id = await offers.personalUser(pool,req.user);
+            else await offers.reserve(null,{audience:'rider',gross:Number(fare),expected:req.body.offer_quote});
             conn = await pool.getConnection();
 
+            if (offers.enabled()) {
+                promotion = await offers.riderQuote(conn,user_id,Number(fare),{pickup:{latitude:pickup_lat,longitude:pickup_lng},destination:{latitude:drop_lat,longitude:drop_lng},vehicle_type});
+                await conn.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+                await conn.beginTransaction(); transactionOpen = true;
+                const [[owner]] = await conn.query('SELECT User_ID_Pk FROM users WHERE User_ID_Pk=? AND COALESCE(AccountDeleted,0)=0 FOR UPDATE',[user_id]);
+                if (!owner) throw Object.assign(new Error('Active rider account required.'),{status:403});
+            }
             const [activeRides] = await conn.query(
                 "SELECT *, User_ID_FK AS User_ID_Fk FROM ride_history WHERE User_ID_Fk = ? AND Ride_Status IN ('Requested', 'Accepted', 'Arrived', 'Started', 'Ongoing')",
                 [user_id]
@@ -45,14 +56,12 @@ const rideController = {
 
             await getSearchConfig(conn, { requireRideEnabled: true }); // Fail before creating a ride if search settings are invalid.
 
-            // Fetch the fee percentage for the vehicle type
-            const [rateRows] = await conn.query("SELECT Fee_Percentage FROM vehicle_fare_rate WHERE Vehicle_Type = ?", [vehicle_type]);
-            const fee_percentage = rateRows.length > 0 ? parseFloat(rateRows[0].Fee_Percentage) : 0;
-
-            // Calculate organization fee from the total fare
-            // The fare passed from frontend already includes the fee
-            const base_total_fare = parseFloat(fare) / (1 + fee_percentage / 100);
-            const organization_fee = parseFloat(fare) - base_total_fare;
+            // Snapshot the configured platform fee for this vehicle and agreed fare.
+            const [rateRows] = await conn.query("SELECT * FROM vehicle_fare_rate WHERE Vehicle_Type = ?", [vehicle_type]);
+            if (!rateRows.length) throw Object.assign(new Error('Vehicle fare configuration is unavailable.'), { status: 503 });
+            const platformFee = includedPlatformFee(rateRows[0], fare);
+            const fee_percentage = platformFee.percentage;
+            const organization_fee = platformFee.fee;
 
             const [result] = await conn.query(
                 `INSERT INTO ride_history (
@@ -71,6 +80,9 @@ const rideController = {
                     fee_percentage, organization_fee
                 ]
             );
+
+            const confirmedOffer = await offers.reserve(conn,{rideId:result.insertId,userId:user_id,audience:'rider',gross:Number(fare),verifiedLimit:promotion?.discount_base_limit,expected:req.body.offer_quote});
+            if (transactionOpen) { await conn.commit(); transactionOpen = false; }
 
             try {
                 const io = getIO();
@@ -92,13 +104,14 @@ const rideController = {
             res.status(201).json({
                 success: true,
                 message: "Ride created successfully",
-                rideId: result.insertId
+                rideId: result.insertId,
+                promotion: confirmedOffer
             });
         } catch (err) {
             console.error("Create Ride Error:", err);
             res.status(err.status || 500).json({ success: false, message: err.status ? err.message : "Error creating ride", error: err.message });
         } finally {
-            if (conn) conn.release();
+            if (conn) { if (transactionOpen) await conn.rollback().catch(()=>{}); conn.release(); }
         }
     },
 
@@ -196,7 +209,7 @@ const rideController = {
 
             // Check dynamic minimum wallet balance limit from vehicle_fare_rate
             const wallet_balance = await getDriverWalletBalance(conn, driver.id, driver.User_ID_FK);
-            const min_wallet_balance = await getVehicleMinWalletLimit(conn, driverVehicleType);
+            const min_wallet_balance = await getVehicleMinWalletLimit(conn, driverVehicleType, {driver,balance:wallet_balance});
             if (wallet_balance < min_wallet_balance) {
                 return res.status(403).json({
                     success: false,
@@ -298,6 +311,7 @@ const rideController = {
             if (driverRows[0].status && String(driverRows[0].status).toLowerCase() !== 'active') {
                 return res.status(403).json({ success: false, message: "Your driver account is under review or not active." });
             }
+            if (offers.enabled()) await conn.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
             await conn.beginTransaction();
             transactionOpen = true;
 
@@ -315,7 +329,7 @@ const rideController = {
 
             // Check dynamic minimum wallet balance limit from vehicle_fare_rate
             const wallet_balance = await getDriverWalletBalance(conn, driver_id, driver.User_ID_FK);
-            const min_wallet_balance = await getVehicleMinWalletLimit(conn, driver.vehicle_type);
+            const min_wallet_balance = await getVehicleMinWalletLimit(conn, driver.vehicle_type, {driver,balance:wallet_balance});
             if (wallet_balance < min_wallet_balance) {
                 return res.status(403).json({
                     success: false,
@@ -335,7 +349,7 @@ const rideController = {
             }
 
             const [rides] = await conn.query(
-                "SELECT Ride_Status, Driver_ID_Fk, User_ID_FK AS User_ID_Fk, Vehicle_Type, Pickup_Lat, Pickup_Lng, TIMESTAMPDIFF(SECOND, CreatedAt, NOW()) AS Search_Age_Seconds FROM ride_history WHERE Ride_ID_Pk = ? FOR UPDATE",
+                "SELECT *, User_ID_FK AS User_ID_Fk, TIMESTAMPDIFF(SECOND, CreatedAt, NOW()) AS Search_Age_Seconds FROM ride_history WHERE Ride_ID_Pk = ? FOR UPDATE",
                 [ride_id]
             );
 
@@ -348,7 +362,7 @@ const rideController = {
                 return res.status(409).json({ success: false, code: 'RIDE_UNAVAILABLE', message: "This ride is no longer available" });
             }
 
-            if (String(ride.User_ID_Fk) === String(user.userId)) {
+            if (String(ride.User_ID_Fk) === String(driver.User_ID_FK || user.userId)) {
                 return res.status(403).json({ success: false, message: "You cannot accept your own ride request." });
             }
 
@@ -356,6 +370,12 @@ const rideController = {
             const search = getSearchState(ride, await getSearchConfig(conn));
             if (search.exhausted || !matchesRide(presence, ride, search.radius_km) || category(driver.vehicle_type) !== category(ride.Vehicle_Type)) {
                 return res.status(409).json({ success: false, code: 'RIDE_UNAVAILABLE', message: "Go online with a fresh GPS location near the pickup to accept this category." });
+            }
+
+            if (offers.enabled()) {
+                const waiver = await offers.reserve(conn,{rideId:ride_id,userId:driver.User_ID_FK,audience:'driver',gross:Number(ride.Fare),normalFee:Number(ride.Organization_Fee||0)});
+                const required = waiver.offer_id && wallet_balance >= 0 ? 0 : await getVehicleMinWalletLimit(conn,driver.vehicle_type);
+                if (wallet_balance < required) return res.status(403).json({success:false,topup_required:true,wallet_balance,min_wallet_balance:required,message:'Your free rides ended. Please top up before accepting another ride.'});
             }
 
             const [acceptResult] = await conn.query(
@@ -723,115 +743,28 @@ const rideController = {
         }
     },
 
-    updateFare: async (req, res) => {
-        const {
-            ride_id, fare, base_fare, per_km_rate,
-            night_charge, peak_hour_surcharge, waiting_charges
-        } = req.body;
-        const user = req.user;
-        const MAX_RETRIES = 2;
-
-        if (!ride_id || fare === undefined) {
-            console.log("❌ Update Fare Missing Data:", { ride_id, fare });
-            return res.status(400).json({ success: false, message: "Ride ID and new fare are required" });
-        }
-        console.log("🚀 Update Fare Request:", { ride_id, fare, userId: user.userId });
-
-        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-            let conn;
+    updateFare: async (req,res) => {
+        const {ride_id,fare}=req.body;
+        if (!ride_id || !Number.isFinite(Number(fare)) || Number(fare)<=0 || Number(fare)>999999.99) return res.status(400).json({success:false,message:'Enter a valid ride fare.'});
+        let conn, open=false;
+        try {
+            conn=await pool.getConnection();await conn.beginTransaction();open=true;
+            const [[ride]]=await conn.query('SELECT *,User_ID_FK AS User_ID_Fk FROM ride_history WHERE Ride_ID_Pk=? FOR UPDATE',[ride_id]);
+            if (!ride) return res.status(404).json({success:false,message:'Ride not found.'});
+            if (String(ride.User_ID_Fk)!==String(req.user.userId)) return res.status(403).json({success:false,message:'Only the rider can adjust this fare.'});
+            if (ride.Ride_Status!=='Requested') return res.status(409).json({success:false,message:'Fare can only change while searching for a driver.'});
+            if (Number(fare)<Number(ride.Fare)) return res.status(400).json({success:false,message:'The confirmed fare cannot be reduced while searching.'});
+            const fee=Number(ride.Fee_Percentage)>0 ? includedPlatformFee({Fee_Percentage:ride.Fee_Percentage},Number(fare)).fee : Number(ride.Organization_Fee||0);
+            const promotion=await offers.updateRiderFare(conn,ride,Number(fare));
+            await conn.query('UPDATE ride_history SET Fare=?,Organization_Fee=? WHERE Ride_ID_Pk=?',[Number(fare),fee,ride_id]);
+            await conn.commit();open=false;
             try {
-                conn = await pool.getConnection();
-
-                const [rides] = await conn.query("SELECT *, User_ID_FK AS User_ID_Fk FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
-                if (rides.length === 0) {
-                    conn.release();
-                    console.log("❌ Update Fare: Ride not found ID:", ride_id);
-                    return res.status(404).json({ success: false, message: "Ride not found" });
-                }
-
-                const ride = rides[0];
-                if (ride.User_ID_Fk != user.userId) {
-                    conn.release();
-                    console.log("❌ Update Fare Forbidden:", { rideUserId: ride.User_ID_Fk, currentUserId: user.userId });
-                    return res.status(403).json({ success: false, message: "You can only update fares for rides you created" });
-                }
-
-                if (ride.Ride_Status !== 'Requested') {
-                    conn.release();
-                    console.log("❌ Update Fare Invalid Status:", ride.Ride_Status);
-                    return res.status(400).json({ success: false, message: `Fare can only be updated for 'Requested' rides. Current: ${ride.Ride_Status}` });
-                }
-
-                const payload = {
-                    ride_id: Number(ride_id),
-                    fare: Number(fare),
-                    base_fare: Number(base_fare || ride.Base_Fare || 0),
-                    per_km_rate: Number(per_km_rate || ride.Per_Km_Rate || 0),
-                    night_charge: Number(night_charge || ride.Night_Charge || 0),
-                    peak_hour_surcharge: Number(peak_hour_surcharge || ride.Peak_Hour_Surcharge || 0),
-                    waiting_charges: Number(waiting_charges || ride.Waiting_Charges || 0),
-                };
-                console.log('🚀 Updating Ride Fare with Payload:', payload);
-
-                const [updateResult] = await conn.query(
-                    `UPDATE ride_history SET 
-                        Fare = ?, Base_Fare = ?, Per_Km_Rate = ?, 
-                        Night_Charge = ?, Peak_Hour_Surcharge = ?, 
-                        Waiting_Charges = ? 
-                    WHERE Ride_ID_Pk = ?`,
-                    [
-                        payload.fare,
-                        payload.base_fare,
-                        payload.per_km_rate,
-                        payload.night_charge,
-                        payload.peak_hour_surcharge,
-                        payload.waiting_charges,
-                        payload.ride_id
-                    ]
-                );
-
-                if (updateResult.affectedRows === 0) {
-                    conn.release();
-                    console.log("⚠️ Update Fare: No rows updated (0 affectedRows) for ID:", ride_id);
-                    return res.status(500).json({ success: false, message: "Failed to update fare record in database" });
-                }
-
-                console.log("✅ DB Updated successfully. rowsAffected:", updateResult.affectedRows);
-
-                // Notify drivers about fare update
-                try {
-                    const io = getIO();
-                    const [updatedRide] = await conn.query("SELECT *, User_ID_FK AS User_ID_Fk, TIMESTAMPDIFF(SECOND, CreatedAt, NOW()) AS Search_Age_Seconds FROM ride_history WHERE Ride_ID_Pk = ?", [ride_id]);
-                    await dispatchRide(io, conn, updatedRide[0], "fare_updated", {
-                        ride_id: Number(ride_id),
-                        new_fare: Number(fare),
-                        ride: { ...updatedRide[0], Fare: Number(fare) }
-                    });
-                } catch (socketErr) {
-                    console.error("Socket emit error (non-blocking):", socketErr.message);
-                }
-
-                conn.release();
-                return res.json({ success: true, message: "Ride fare updated successfully" });
-
-            } catch (err) {
-                if (conn) {
-                    try { conn.release(); } catch (e) { /* ignore */ }
-                }
-
-                const isConnError = err.code === 'ECONNRESET' || err.code === 'ECONNABORTED' ||
-                    err.code === 'PROTOCOL_CONNECTION_LOST' || err.message?.includes('ECONNRESET');
-
-                if (isConnError && attempt < MAX_RETRIES) {
-                    console.log(`🔄 updateFare: DB connection error, retrying (${attempt + 1}/${MAX_RETRIES})...`);
-                    await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
-                    continue;
-                }
-
-                console.error("Update Fare Error:", err);
-                return res.status(500).json({ success: false, message: "Error updating fare", error: err.message });
-            }
-        }
+                const [[fresh]]=await conn.query('SELECT *,User_ID_FK AS User_ID_Fk,TIMESTAMPDIFF(SECOND,CreatedAt,NOW()) AS Search_Age_Seconds FROM ride_history WHERE Ride_ID_Pk=?',[ride_id]);
+                await dispatchRide(getIO(),conn,fresh,'fare_updated',{ride_id:Number(ride_id),new_fare:Number(fare),ride:fresh});
+            } catch(e) { console.error('Fare dispatch failed:',e.code||'ERROR'); }
+            res.json({success:true,message:'Fare updated.',promotion});
+        } catch(e) { res.status(e.status||500).json({success:false,message:e.status?e.message:'Unable to adjust fare. Please refresh and retry.'}); }
+        finally { if(conn){if(open)await conn.rollback().catch(()=>{});conn.release();} }
     },
 
     getRideHistory: async (req, res) => {
@@ -1052,7 +985,7 @@ const rideController = {
 
             // Calculate driver wallet balance and dynamic vehicle minimum limit
             const wallet_balance = await getDriverWalletBalance(conn, driver.id, driver.User_ID_FK);
-            const min_wallet_balance = await getVehicleMinWalletLimit(conn, driver.vehicle_type);
+            const min_wallet_balance = await getVehicleMinWalletLimit(conn, driver.vehicle_type, {driver,balance:wallet_balance});
             const is_wallet_sufficient = wallet_balance >= min_wallet_balance;
 
             res.json({
@@ -1063,6 +996,7 @@ const rideController = {
                     wallet_balance: parseFloat(wallet_balance.toFixed(2)),
                     min_wallet_balance: parseFloat(min_wallet_balance.toFixed(2)),
                     is_wallet_sufficient,
+                    free_ride_offer: await offers.driverBenefit(conn,driver,wallet_balance),
                     total_reviews: reviewStats[0]?.total_reviews || 0,
                     avg_rating: reviewStats[0]?.avg_rating ? parseFloat(reviewStats[0].avg_rating).toFixed(1) : '0.0',
                     total_rides: rideStats[0]?.total_rides || 0,
@@ -1184,7 +1118,7 @@ const rideController = {
 
             // Calculate wallet balance for driver
             const driver_wallet_balance = await getDriverWalletBalance(conn, driverId, driverRows[0]?.User_ID_FK);
-            const min_wallet_balance = await getVehicleMinWalletLimit(conn, driverRows[0]?.vehicle_type);
+            const min_wallet_balance = await getVehicleMinWalletLimit(conn, driverRows[0]?.vehicle_type, {driver:driverRows[0],balance:driver_wallet_balance});
 
             const summary = {
                 total_rides: summaryRows[0]?.total_rides || 0,

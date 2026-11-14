@@ -190,7 +190,7 @@ function createAdminFranchiseMembers(pool) {
             data.full_name,
             data.phone,
             data.email || null,
-            body.kind,
+            "rider",
             crypto.randomBytes(16).toString("hex"),
             franchiseId,
             data.city,

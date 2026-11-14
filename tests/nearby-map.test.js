@@ -8,6 +8,8 @@ const { nearbyDriverLocations } = require('../services/driverDispatch');
 async function request(query = { lat: 24.86, lng: 67 }, locations = []) {
     let connections = 0;
     const dependencies = {
+        '../services/offers': require('../services/offers'),
+        '../services/platformFee': require('../services/platformFee'),
         '../services/rideCompletionSettlement': require('../services/rideCompletionSettlement'),
         '../services/rideChatService': require('../services/rideChatService'),
         crypto: require('node:crypto'), '../services/rideSearch': {},

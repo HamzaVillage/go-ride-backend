@@ -1,4 +1,4 @@
-const { createHash, timingSafeEqual, randomBytes } = require("node:crypto");
+const { randomBytes } = require("node:crypto");
 const {
   USER_PHONE_SQL,
   phoneArgs,
@@ -9,7 +9,7 @@ const {
 const { fail } = require("./employeeAccess");
 const { formatDriverCode } = require("../utils/driverHelper");
 const MODES = ["rider", "driver", "city_to_city_driver"];
-const digest = (v) => createHash("sha256").update(v).digest("hex");
+const { matchesOtp } = require("./otpValue");
 const denied = (u) =>
   Number(u.AccountDeleted) ||
   ["admin", "superadmin", "employee"].includes(
@@ -180,7 +180,7 @@ function createMobileAuth({ pool, sendOtp, signToken }) {
         );
         await c.query(
           "INSERT INTO otp_verifications (phone_number,otp_hash,purpose,payload,expires_at) VALUES (?,?,?,?,DATE_ADD(NOW(),INTERVAL 10 MINUTE))",
-          [phone, digest(otp), purpose, payload]
+          [phone, otp, purpose, payload]
         );
         return { message: "Verification code sent.", otp_purpose: purpose };
       });
@@ -202,9 +202,7 @@ function createMobileAuth({ pool, sendOtp, signToken }) {
         );
         const r = rows[0];
         if (!r || Number(r.attempts) >= 5) return { invalid: true };
-        const got = Buffer.from(digest(body.otp)),
-          expected = Buffer.from(r.otp_hash);
-        if (got.length !== expected.length || !timingSafeEqual(got, expected)) {
+        if (!matchesOtp(body.otp, r.otp_hash)) {
           await c.query(
             "UPDATE otp_verifications SET attempts=COALESCE(attempts,0)+1 WHERE id=?",
             [r.id]
