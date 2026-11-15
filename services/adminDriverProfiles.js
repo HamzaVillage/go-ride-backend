@@ -1,4 +1,4 @@
-const { getAccess } = require('./employeeAccess');
+const { requireFranchiseResource, getAccess, requirePermission } = require('./employeeAccess');
 const {assertDriverUserLink}=require('./driverUserLink');
 const crypto = require('node:crypto');
 const {formatDriverCode} = require('../utils/driverHelper');
@@ -57,7 +57,7 @@ function createAdminDriverProfiles(pool,{enabled=writesEnabled}={}) {
         let conn;let started=false;
         try {
             conn=await pool.getConnection();await conn.beginTransaction();started=true;
-            const access = await getAccess(conn, actor, { lock: true }); if (!access.functions.includes('drivers')) throw fail(403, 'Driver screen access is required.');
+            const access = await getAccess(conn, actor, { lock: true }); requirePermission(access,'drivers','can_edit'); await requireFranchiseResource(conn,access,'drivers',id,true);
             const row=await getRow(conn,id,true);if(versionOf(row)!==version)throw fail(409,'This driver was changed elsewhere. Reload the latest profile and review your changes again.','PROFILE_CONFLICT');
             await action(conn,row,id);const fresh=await getRow(conn,id);await conn.commit();started=false;
             console.info('Admin driver change saved',{adminId:actor,driverId:id});

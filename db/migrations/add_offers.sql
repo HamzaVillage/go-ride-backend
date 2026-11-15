@@ -45,5 +45,4 @@ CREATE TABLE IF NOT EXISTS promotion_audit (
  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
  KEY ix_promotion_audit (offer_id,id)
 ) ENGINE=InnoDB;
-INSERT INTO employee_function (function_code,function_name) VALUES ('offers','Offers')
-ON DUPLICATE KEY UPDATE function_code=VALUES(function_code);
+INSERT INTO employee_function (function_code,function_name) SELECT '11','Offers' WHERE NOT EXISTS (SELECT 1 FROM employee_function WHERE function_code IN ('offers','11'));

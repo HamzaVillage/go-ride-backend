@@ -19,7 +19,7 @@ async function fixture(t, { employee = false, inactive = false } = {}) {
     const filePath = path.join(directory, 'fixture.sql.gz'); await fs.writeFile(filePath, gzipSync('CREATE TABLE fixture (id INT);'));
     const conn = { release() {}, async query(sql) {
         if (sql.includes('FROM employee')) return [[{ emp_id:7, account_type:employee?'employee':'superadmin', is_active:inactive?0:1, is_deleted:0 }]];
-        if (sql.includes('SELECT DISTINCT')) return [[{ function_code: 'settings' }]];
+        if (sql.includes('SELECT DISTINCT')) return [[{function_code:'settings',can_view:1,can_add:1,can_edit:1,can_delete:1}]];
         throw new Error('Unexpected SQL');
     } };
     const pool = { getConnection: async () => conn, query: sql => conn.query(sql) };

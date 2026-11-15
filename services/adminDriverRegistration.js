@@ -1,6 +1,6 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
-const { getAccess, fail } = require('./employeeAccess');
+const { getAccess, fail, requirePermission } = require('./employeeAccess');
 const { validateMember } = require('./adminFranchiseMembers');
 const { createCityToCityDrivers, validateApplication, DOCUMENT_TYPES } = require('./cityToCityDrivers');
 const { USER_PHONE_SQL, phoneArgs, acquirePhoneLock, releasePhoneLock } = require('./appUserIdentity');
@@ -21,7 +21,7 @@ function createAdminDriverRegistration(pool, { saveDocument = storeDocument } = 
     const intercity = createCityToCityDrivers(pool);
     async function authorize(conn, actor, kind, lock = false) {
         const access = await getAccess(conn, actor, { lock });
-        if (!access.functions.includes(screenOf(kind))) throw fail(403, 'Driver registration access is required.');
+        requirePermission(access,screenOf(kind),lock ? 'can_add' : 'can_view');
     }
     return {
         async options(actor, kind) {

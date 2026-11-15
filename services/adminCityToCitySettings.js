@@ -1,5 +1,5 @@
 const crypto = require("node:crypto");
-const { getAccess, fail } = require("./employeeAccess");
+const { getAccess, fail, requirePermission } = require("./employeeAccess");
 const { calculateCityFare } = require("./cityToCityPricing");
 const numericFields = {
   minimum_topup_amount: [0, 99999999.99],
@@ -145,10 +145,9 @@ function validateChanges(body, current, route = false) {
   return result;
 }
 function createAdminCityToCitySettings(pool) {
-  async function access(conn, actor, screen) {
+  async function access(conn, actor, screen, action='can_edit') {
     const a = await getAccess(conn, actor, { lock: true });
-    if (!a.functions.includes(screen))
-      throw fail(403, "This screen is not assigned to your role.");
+    requirePermission(a,screen,action);
   }
   async function transaction(action) {
     const conn = await pool.getConnection();
@@ -216,7 +215,7 @@ function createAdminCityToCitySettings(pool) {
     },
     async createRoute(actor, body = {}) {
       return transaction(async (conn) => {
-        await access(conn, actor, "city_to_city_routes");
+        await access(conn, actor, 'city_to_city_routes', 'can_add');
         const service = await snapshot(
           conn,
           "city_to_city_services",

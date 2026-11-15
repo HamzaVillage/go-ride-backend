@@ -97,3 +97,17 @@ test('HTTP top-up uses authenticated admin identity and ignores body identity',a
     const response=await fetch(`http://127.0.0.1:${server.address().port}/admin/drivers/10/topups`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json','Idempotency-Key':key},body:JSON.stringify({...body,created_by:999,admin_id:999})});
     assert.equal(response.status,200);assert.equal((await response.json()).data.driver_id,10);assert.equal(f.state.entries[0].created_by,7);
 });
+
+test('city filter uses exact normalized parameters for count and rows while options cover all cities',async()=>{
+ const queries=[];let released=false;
+ const pool={getConnection:async()=>({release(){released=true;},async query(sql,args=[]){queries.push({sql,args});if(sql.includes('GROUP BY LOWER(TRIM(d.city))'))return [[{city:'Karachi'},{city:'Lahore'}]];if(sql.includes('COUNT(*)'))return [[{total:1}]];return [[{id:10,city:'Karachi',wallet_balance:0}]];}})};
+ const result=await createAdminDriversService(pool).list({city:'  KARACHI ',status:'active',page:'2',limit:'20',q:'Ali'});
+ assert.match(queries[0].sql,/LOWER\(TRIM\(d.city\)\) = \?/);assert.match(queries[1].sql,/LOWER\(TRIM\(d.city\)\) = \?/);
+ assert.equal(queries[0].args[1],'karachi');assert.deepEqual(queries[1].args.slice(0,-2),queries[0].args);
+ assert.doesNotMatch(queries[0].sql,/KARACHI|karachi/);assert.doesNotMatch(queries[2].sql,/d.status = \?/);
+ assert.deepEqual(result.cities,['Karachi','Lahore']);assert.equal(result.pagination.total,1);assert.equal(released,true);
+});
+test('invalid city filters are rejected before acquiring a connection',async()=>{
+ const service=createAdminDriversService({getConnection(){throw new Error('No database access expected');}});
+ for(const city of [[],{},true,42,'x'.repeat(101)])await assert.rejects(service.list({city}),{status:400});
+});

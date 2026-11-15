@@ -1,5 +1,5 @@
 const { createHash } = require('node:crypto');
-const { fail, getAccess } = require('./employeeAccess');
+const { fail, getAccess, requirePermission } = require('./employeeAccess');
 const { validatePolicy, loadFarePolicy, decimal, scheduleStatus, calculateEstimatedFare } = require('./farePolicy');
 const SERVICE_FLAGS = ['ride_service', 'courier_service', 'food_delivery_service', 'grocery_service', 'city_to_city_service', 'hotel_booking_service', 'car_rental_service', 'fare_increaser'];
 const CONFIG_KEYS = [...SERVICE_FLAGS, 'dispatch_min_radius_km', 'dispatch_radius_km'];
@@ -43,7 +43,7 @@ async function readSettings(conn, lock = false) {
     return { configuration, version: versionOf(configuration), capabilities: { policy_editable: policyEditable, platform_fee_editable: rates.every(rate => Object.hasOwn(rate, 'Platform_Fee_Is_Percentage') && Object.hasOwn(rate, 'Platform_Fee_RS')) } };
 }
 async function requireSettingsActor(conn, actor) {
-    const access = await getAccess(conn, actor, { lock: true }); if (!access.functions.includes('settings')) throw fail(403, 'Settings access is required.');
+    const access = await getAccess(conn, actor, { lock: true }); requirePermission(access,'settings','can_edit');
 }
 function createAdminSettings(pool) {
     return {

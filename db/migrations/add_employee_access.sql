@@ -81,6 +81,10 @@ CREATE TABLE IF NOT EXISTS assign_role (
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS assign_role_function (
+    can_view TINYINT(1) NOT NULL DEFAULT 0,
+    can_add TINYINT(1) NOT NULL DEFAULT 0,
+    can_edit TINYINT(1) NOT NULL DEFAULT 0,
+    can_delete TINYINT(1) NOT NULL DEFAULT 0,
     assignment_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     role_id BIGINT UNSIGNED NOT NULL,
     function_id BIGINT UNSIGNED NOT NULL,
@@ -98,16 +102,20 @@ CREATE TABLE IF NOT EXISTS assign_role_function (
     CONSTRAINT fk_assign_role_function_updater FOREIGN KEY (updated_by) REFERENCES employee(emp_id)
 ) ENGINE=InnoDB;
 
--- Stable codes map to registered admin routes. Do not rename deployed codes.
-INSERT INTO employee_function (function_code, function_name) VALUES
-('overview', 'Overview'),
-('rides', 'Rides'),
-('drivers', 'Drivers'),
-('riders', 'Riders'),
-('franchises', 'Franchises'),
-('reports', 'Chat reports'),
-('support', 'Support queries'),
-('notifications', 'Notifications'),
-('settings', 'Settings'),
-('employees', 'Employee access')
-ON DUPLICATE KEY UPDATE function_code = VALUES(function_code);
+-- Numeric codes map to registered screens without duplicating legacy aliases.
+INSERT INTO employee_function (function_code,function_name) SELECT '01','Overview' WHERE NOT EXISTS (SELECT 1 FROM employee_function WHERE function_code IN ('overview','01'));
+INSERT INTO employee_function (function_code,function_name) SELECT '02','Rides' WHERE NOT EXISTS (SELECT 1 FROM employee_function WHERE function_code IN ('rides','02'));
+INSERT INTO employee_function (function_code,function_name) SELECT '03','Drivers' WHERE NOT EXISTS (SELECT 1 FROM employee_function WHERE function_code IN ('drivers','03'));
+INSERT INTO employee_function (function_code,function_name) SELECT '04','Riders' WHERE NOT EXISTS (SELECT 1 FROM employee_function WHERE function_code IN ('riders','04'));
+INSERT INTO employee_function (function_code,function_name) SELECT '05','Franchises' WHERE NOT EXISTS (SELECT 1 FROM employee_function WHERE function_code IN ('franchises','05'));
+INSERT INTO employee_function (function_code,function_name) SELECT '06','Chat reports' WHERE NOT EXISTS (SELECT 1 FROM employee_function WHERE function_code IN ('reports','06'));
+INSERT INTO employee_function (function_code,function_name) SELECT '07','Support queries' WHERE NOT EXISTS (SELECT 1 FROM employee_function WHERE function_code IN ('support','07'));
+INSERT INTO employee_function (function_code,function_name) SELECT '08','Notifications' WHERE NOT EXISTS (SELECT 1 FROM employee_function WHERE function_code IN ('notifications','08'));
+INSERT INTO employee_function (function_code,function_name) SELECT '09','Settings' WHERE NOT EXISTS (SELECT 1 FROM employee_function WHERE function_code IN ('settings','09'));
+INSERT INTO employee_function (function_code,function_name) SELECT '10','Employee access' WHERE NOT EXISTS (SELECT 1 FROM employee_function WHERE function_code IN ('employees','10'));
+INSERT INTO employee_function (function_code,function_name) SELECT '11','Offers' WHERE NOT EXISTS (SELECT 1 FROM employee_function WHERE function_code IN ('offers','11'));
+INSERT INTO employee_function (function_code,function_name) SELECT '12','City-to-City Drivers' WHERE NOT EXISTS (SELECT 1 FROM employee_function WHERE function_code IN ('city_to_city_drivers','12'));
+INSERT INTO employee_function (function_code,function_name) SELECT '13','City-to-City Service & Fares' WHERE NOT EXISTS (SELECT 1 FROM employee_function WHERE function_code IN ('city_to_city_fares','13'));
+INSERT INTO employee_function (function_code,function_name) SELECT '14','City-to-City Route Fares' WHERE NOT EXISTS (SELECT 1 FROM employee_function WHERE function_code IN ('city_to_city_routes','14'));
+INSERT INTO employee_function (function_code,function_name) SELECT '15','City-to-City Fare Calculator' WHERE NOT EXISTS (SELECT 1 FROM employee_function WHERE function_code IN ('city_to_city_calculator','15'));
+INSERT INTO employee_function (function_code,function_name) SELECT '16','Franchise Drivers & Riders' WHERE NOT EXISTS (SELECT 1 FROM employee_function WHERE function_code IN ('franchise_members','16'));

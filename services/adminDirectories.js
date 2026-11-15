@@ -28,8 +28,9 @@ async function readPage(pool, spec, options) {
 }
 function createAdminDirectoriesService(pool) {
     return {
-        rides(query = {}) {
+        rides(query = {}, franchiseId = null) {
             const options = filters(query, ['CAST(r.Ride_ID_Pk AS CHAR)', 'u.User_Name', 'd.full_name', 'r.Pickup_Location', 'r.Drop_Location'], ['requested', 'accepted', 'arrived', 'started', 'completed', 'cancelled', 'rejected'], 'LOWER(r.Ride_Status)');
+            if (franchiseId) { options.clauses.push('d.Franchiser_ID_FK = ?'); options.params.push(franchiseId); }
             return readPage(pool, {
                 key: 'rides', from: 'ride_history r LEFT JOIN users u ON u.User_ID_Pk = r.User_ID_Fk LEFT JOIN drivers d ON d.id = r.Driver_ID_Fk',
                 columns: `r.Ride_ID_Pk AS id, r.User_ID_Fk AS rider_id, r.Driver_ID_Fk AS driver_id, u.User_Name AS rider, d.full_name AS driver,
@@ -39,15 +40,16 @@ function createAdminDirectoriesService(pool) {
                 normalize: row => ({ ...row, rider: row.rider || 'Unavailable rider', driver: row.driver || 'Not assigned', fare: Number(row.fare || 0), ride_at: row.ride_at == null ? null : Number(row.ride_at) }),
             }, options);
         },
-        riders(query = {}) {
+        riders(query = {}, franchiseId = null) {
             const options = filters(query, ['CAST(u.User_ID_Pk AS CHAR)', 'u.User_Name', 'u.Mobile', 'u.Email', 'u.City'], ['active', 'deleted'], "CASE WHEN COALESCE(u.AccountDeleted, 0) = 0 THEN 'active' ELSE 'deleted' END");
             options.clauses.unshift("LOWER(TRIM(COALESCE(u.Role, ''))) IN ('rider', 'user', 'customer', '')");
+            if (franchiseId) { options.clauses.push('u.Franchiser_ID_FK = ?'); options.params.push(franchiseId); }
             return readPage(pool, {
                 key: 'riders', from: 'users u',
                 columns: `u.User_ID_Pk AS id, u.User_Name AS name, u.Mobile AS phone, u.Email AS email, u.City AS city,
                     UNIX_TIMESTAMP(u.Create_Date) * 1000 AS joined_at,
                     CASE WHEN COALESCE(u.AccountDeleted, 0) = 0 THEN 'active' ELSE 'deleted' END AS status,
-                    (SELECT COUNT(*) FROM ride_history r WHERE r.User_ID_Fk = u.User_ID_Pk) AS trips`,
+                    (SELECT COUNT(*) FROM ride_history r WHERE r.User_ID_Fk = u.User_ID_Pk${franchiseId ? " AND EXISTS (SELECT 1 FROM drivers rd WHERE rd.id=r.Driver_ID_Fk AND rd.Franchiser_ID_FK=u.Franchiser_ID_FK)" : ""}) AS trips`,
                 order: 'u.User_ID_Pk DESC', normalize: row => ({ ...row, trips: Number(row.trips || 0), joined_at: row.joined_at == null ? null : Number(row.joined_at) }),
             }, options);
         },

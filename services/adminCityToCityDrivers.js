@@ -1,10 +1,10 @@
 const { createCityToCityDrivers, validateApplication, fail, validSavedCar } = require('./cityToCityDrivers');
-const { getAccess } = require('./employeeAccess');
+const { getAccess, requirePermission } = require('./employeeAccess');
 function createAdminCityToCityDrivers(pool) {
     const profiles = createCityToCityDrivers(pool);
     function id(value) { if (!/^[1-9]\d*$/.test(String(value)) || Number(value) > 2147483647) throw fail(400, 'Invalid driver ID.'); return Number(value); }
     async function actor(conn, userId) {
-        const access = await getAccess(conn, userId, { lock: true }); if (!access.functions.includes('city_to_city_drivers')) throw fail(403, 'Driver management access is required.');
+        const access = await getAccess(conn, userId, { lock: true }); requirePermission(access,'city_to_city_drivers','can_edit');
     }
     return {
         async list(query = {}) {

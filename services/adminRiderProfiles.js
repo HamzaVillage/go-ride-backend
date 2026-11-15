@@ -1,5 +1,5 @@
 const crypto = require("node:crypto");
-const { getAccess, fail } = require("./employeeAccess");
+const { requireFranchiseResource, getAccess, fail, requirePermission } = require("./employeeAccess");
 const { idOf, validateChanges } = require("./adminDriverProfiles");
 const columns = {
   full_name: "User_Name",
@@ -43,8 +43,7 @@ function createAdminRiderProfiles(pool) {
       try {
         await conn.beginTransaction();
         const access = await getAccess(conn, actor, { lock: true });
-        if (!access.functions.includes("riders"))
-          throw fail(403, "Rider screen access is required.");
+        requirePermission(access,"riders",'can_edit'); await requireFranchiseResource(conn,access,'riders',id,true);
         const row = await get(conn, id, true);
         if (body.version !== version(row))
           throw fail(

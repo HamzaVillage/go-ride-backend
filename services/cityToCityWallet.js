@@ -1,4 +1,4 @@
-const { fail, getAccess } = require('./employeeAccess');
+const { fail, getAccess, requirePermission } = require('./employeeAccess');
 const { amountInPaisa, pagination } = require('./adminDrivers');
 const METHODS=['bank_transfer','easypaisa','jazzcash'];
 const id=v=>{if(!/^[1-9]\d*$/.test(String(v))||!Number.isSafeInteger(Number(v)))throw fail(400,'Invalid record ID.');return Number(v);};
@@ -55,7 +55,7 @@ function createCityToCityWallet(pool){
    if(typeof requestKey!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestKey))throw fail(400,'A UUID v4 Idempotency-Key header is required.');
    const key=`ADMIN_${requestKey.toLowerCase()}`;
    return tx(async c=>{
-    const access=await getAccess(c,actor,{lock:true});if(!access.functions.includes('city_to_city_drivers'))throw fail(403,'City-to-city driver access is required.');
+    const access=await getAccess(c,actor,{lock:true});requirePermission(access,'city_to_city_drivers','can_add');
     await lockDriver(c,driverId);
     const [old]=await c.query('SELECT id,amount,service_id,payment_method,payment_reference,status,reviewed_by_employee_id FROM city_to_city_topup_requests WHERE city_to_city_driver_id=? AND idempotency_key=?',[driverId,key]);
     if(old[0]){const r=old[0];if(r.status!=='approved'||Math.round(Number(r.amount)*100)!==cents||r.payment_reference!==reference||r.payment_method!==body.payment_method||Number(r.reviewed_by_employee_id)!==actor)throw fail(409,'This request key was already used with different details.');return {id:r.id,already_applied:true,balance:Number(money(await balance(c,driverId)))};}
@@ -104,7 +104,7 @@ function createCityToCityWallet(pool){
    const reason=typeof body.reason==='string'?body.reason.trim():'';
    if(reason.length>500||(body.status==='rejected'&&!reason))throw fail(400,'Enter a rejection reason of up to 500 characters.');
    return tx(async c=>{
-    const access=await getAccess(c,actor,{lock:true});if(!access.functions.includes('city_to_city_drivers'))throw fail(403,'City-to-city driver access is required.');
+    const access=await getAccess(c,actor,{lock:true});requirePermission(access,'city_to_city_drivers','can_edit');
     await lockDriver(c,driverId);
     const [rows]=await c.query('SELECT * FROM city_to_city_topup_requests WHERE id=? AND city_to_city_driver_id=? FOR UPDATE',[requestId,driverId]);const r=rows[0];if(!r)throw fail(404,'Top-up request not found.');
     if(r.status!=='pending'){if(r.status===body.status)return {id:r.id,status:r.status,already_reviewed:true,balance:Number(money(await balance(c,driverId)))};throw fail(409,'This request has already been reviewed.');}

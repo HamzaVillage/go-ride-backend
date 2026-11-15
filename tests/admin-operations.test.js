@@ -267,7 +267,7 @@ function memberFixture({
           ],
         ];
       if (sql.includes("SELECT DISTINCT"))
-        return [[{ function_code: "franchise_members" }]];
+        return [[{function_code:"franchise_members",can_view:1,can_add:1,can_edit:1,can_delete:1}]];
       if (sql.includes("FROM employee_franchise_access"))
         return [missingScope ? [] : [{ franchise_id: 5 }]];
       if (sql.includes("FROM franchiser"))

@@ -14,7 +14,7 @@ function fixture() {
     const conn = { release() { state.released++; }, async query(sql, args) {
         state.queries.push({ sql, args });
         if (sql.includes('FROM employee WHERE emp_id')) return [state.activeAccount && state.employee ? [{...state.employee, account_type:state.root?'superadmin':state.employee.account_type}] : []];
-        if (sql.includes('SELECT DISTINCT')) return [state.codes.map(function_code => ({ function_code }))];
+        if (sql.includes('SELECT DISTINCT')) return [state.codes.map(function_code => ({ function_code,can_view:1,can_add:1,can_edit:1,can_delete:1 }))];
         throw new Error(`Unexpected query: ${sql}`);
     } };
     const pool = { getConnection: async () => conn };
@@ -22,7 +22,7 @@ function fixture() {
 }
 test('effective access uses live employee, role and screen flags and unions distinct grants', async () => {
     const f = fixture(); const access = await getAccess(f.conn, 9);
-    assert.deepEqual(access, { employee_id: 12, is_super_admin: false, functions: ['drivers', 'support'] });
+    assert.equal(access.employee_id,12); assert.equal(access.is_super_admin,false); assert.deepEqual(access.functions,['drivers','support']); assert.equal(access.permissions.drivers.can_edit,true);
     const sql = f.state.queries.at(-1).sql;
     for (const alias of ['a', 'r', 'af', 'f']) { assert.match(sql, new RegExp(`${alias}\\.is_active = 1`)); assert.match(sql, new RegExp(`${alias}\\.is_deleted = 0`)); }
     assert.match(sql, /SELECT DISTINCT/);
@@ -98,7 +98,7 @@ test('assignment failure rolls back both the employee and credential records', a
 });
 test('role screen replacement soft-deletes removed grants and rejects stale versions', async () => {
     const f = transactionFixture(); await createEmployeeService(f.pool).saveRole(3, 7, { version: 1, function_ids: [2] });
-    assert.match(f.state.removal.sql, /is_active = 0, is_deleted = 1/); assert.deepEqual(f.state.assignment.args, [3, 2, 7, 7]); assert.equal(f.state.commits, 1);
+    assert.match(f.state.removal.sql, /is_active\s*=\s*0,is_deleted\s*=\s*1/); assert.deepEqual(f.state.assignment.args, [3, 2, 1, 0, 0, 0, 7, 7]); assert.equal(f.state.commits, 1);
     const stale = transactionFixture({ conflict: true }); await assert.rejects(createEmployeeService(stale.pool).saveRole(3, 7, { version: 1, function_ids: [2] }), { status: 409 }); assert.equal(stale.state.assignment, undefined);
 });
 test('employee login issues a scoped eight-hour employee JWT and checks account status', async t => {

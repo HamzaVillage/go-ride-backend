@@ -19,7 +19,9 @@
     "audit:driver-user-links": "node scripts/auditDriverUserLinks.js",
     "setup:driver-user-links": "node scripts/configureDriverUserLinks.js",
     "setup:platform-fees": "node scripts/configurePlatformFees.js",
-    "setup:offers": "node scripts/configureOffers.js"
+    "setup:offers": "node scripts/configureOffers.js",
+    "setup:role-permissions": "node scripts/configureRolePermissions.js",
+    "setup:franchises": "node scripts/configureFranchises.js"
   },
   "keywords": [],
   "dependencies": {

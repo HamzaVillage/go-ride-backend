@@ -1,4 +1,4 @@
-const { getAccess } = require('./employeeAccess');
+const { requireFranchiseResource, getAccess, requirePermission } = require('./employeeAccess');
 const { DOCUMENTS } = require('./adminDriverProfiles');
 const { formatDriverCode, getDriverWalletBalance } = require('../utils/driverHelper');
 const STATUSES = ['unverified', 'pending', 'active', 'inactive', 'blocked'];
@@ -36,15 +36,19 @@ const normalizeDriver = row => ({ ...row, driver_code: formatDriverCode(row.id),
 const normalizeTxn = row => ({ ...row, amount: Number(row.amount) });
 function createAdminDriversService(pool) {
     return {
-        async list(query = {}) {
+        async list(query = {}, franchiseId = null) {
             const { page, limit, offset } = pagination(query);
             const status = query.status || 'all'; const online = query.online || 'all';
             if (typeof status !== 'string' || (status !== 'all' && !STATUSES.includes(status))) throw fail(400, 'Invalid driver status.');
             if (!['all', 'online', 'offline'].includes(online)) throw fail(400, 'Invalid online filter.');
             if (query.q !== undefined && (typeof query.q !== 'string' || query.q.length > 100)) throw fail(400, 'Search must be at most 100 characters.');
+            if (query.city !== undefined && (typeof query.city !== 'string' || query.city.length > 100)) throw fail(400, 'City must be at most 100 characters.');
+            const city = (query.city || '').trim();
             const filters = []; const params = [];
+            if (franchiseId) { filters.push("d.Franchiser_ID_FK = ?"); params.push(franchiseId); }
             if (status !== 'all') { filters.push('LOWER(d.status) = ?'); params.push(status); }
             if (online !== 'all') { filters.push('COALESCE(d.Is_Online, 0) = ?'); params.push(online === 'online' ? 1 : 0); }
+            if (city) { filters.push('LOWER(TRIM(d.city)) = ?'); params.push(city.toLowerCase()); }
             const q = (query.q || '').trim();
             if (q) {
                 const like = `%${q.replace(/[=%_]/g, c => `=${c}`)}%`;
@@ -57,7 +61,9 @@ function createAdminDriversService(pool) {
                 conn = await pool.getConnection();
                 const [counts] = await conn.query(`SELECT COUNT(*) AS total FROM drivers d ${where}`, params);
                 const [rows] = await conn.query(`SELECT ${columns} FROM drivers d ${where} ORDER BY d.id DESC LIMIT ? OFFSET ?`, [...params, limit, offset]);
-                return { drivers: rows.map(normalizeDriver), pagination: { page, limit, total: Number(counts[0].total), totalPages: Math.ceil(Number(counts[0].total) / limit) } };
+                const [cityRows] = await conn.query(`SELECT MIN(TRIM(d.city)) AS city FROM drivers d WHERE ${franchiseId ? "d.Franchiser_ID_FK = ? AND " : ""}d.city IS NOT NULL AND TRIM(d.city) <> '' GROUP BY LOWER(TRIM(d.city)) ORDER BY city`, franchiseId ? [franchiseId] : []);
+                const cities = cityRows.map(row => row.city).filter(value => typeof value === 'string' && value.length > 0);
+                return { cities, drivers: rows.map(normalizeDriver), pagination: { page, limit, total: Number(counts[0].total), totalPages: Math.ceil(Number(counts[0].total) / limit) } };
             } finally { if (conn) conn.release(); }
         },
         async wallet(id, query = {}) {
@@ -84,7 +90,7 @@ function createAdminDriversService(pool) {
             let conn; let started = false;
             try {
                 conn = await pool.getConnection(); await conn.beginTransaction(); started = true;
-            const access = await getAccess(conn, actor, { lock: true }); if (!access.functions.includes('drivers')) throw fail(403, 'Driver screen access is required.');
+            const access = await getAccess(conn, actor, { lock: true }); requirePermission(access,'drivers','can_add'); await requireFranchiseResource(conn,access,'drivers',driverId,true);
                 // Serialize all top-ups for this driver, including simultaneous retries.
                 const [drivers] = await conn.query('SELECT id FROM drivers WHERE id = ? FOR UPDATE', [driverId]);
                 if (!drivers.length) throw fail(404, 'Driver not found.');

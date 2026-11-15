@@ -1,4 +1,4 @@
-const { getAccess, fail } = require("./employeeAccess");
+const { getAccess, fail, requirePermission } = require("./employeeAccess");
 const { enabled } = require("./offers");
 function validate(body) {
   if (
@@ -102,10 +102,9 @@ const normalize = (row) => ({
   benefit_total: Number(row.benefit_total || 0),
 });
 function createAdminOffers(pool) {
-  async function access(conn, actor, lock = false) {
+  async function access(conn, actor, lock = false, action='can_view') {
     const a = await getAccess(conn, actor, { lock });
-    if (!a.functions.includes("offers"))
-      throw fail(403, "Offers access is required.");
+    requirePermission(a,'offers',action);
   }
   return {
     async list(actor) {
@@ -149,7 +148,7 @@ function createAdminOffers(pool) {
           throw fail(400, "A creation request key is required.");
         await c.beginTransaction();
         started = true;
-        await access(c, actor, true);
+        await access(c, actor, true, id ? 'can_edit' : 'can_add');
         let old;
         if (id) {
           const [rows] = await c.query(

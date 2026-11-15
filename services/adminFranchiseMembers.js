@@ -1,11 +1,10 @@
 const crypto = require("node:crypto");
-const { getAccess, fail } = require("./employeeAccess");
+const { getAccess, fail, requirePermission } = require("./employeeAccess");
 const { idOf, validateChanges } = require("./adminDriverProfiles");
 const { formatDriverCode } = require("../utils/driverHelper");
 async function scope(conn, actor, requested, lock = false) {
   const access = await getAccess(conn, actor, { lock });
-  if (!access.functions.includes("franchise_members"))
-    throw fail(403, "Franchise member access is required.");
+  requirePermission(access,'franchise_members',lock ? 'can_add' : 'can_view');
   if (access.is_super_admin) return requested ? idOf(requested) : null;
   const [rows] = await conn.query(
     `SELECT franchise_id FROM employee_franchise_access WHERE employee_id=?${lock ? " FOR UPDATE" : ""}`,
@@ -145,11 +144,13 @@ function createAdminFranchiseMembers(pool) {
         const franchiseId = await scope(conn, actor, body.franchise_id, true);
         if (!franchiseId) throw fail(400, "Choose a franchise.");
         const [franchises] = await conn.query(
-          "SELECT id,status FROM franchiser WHERE id=? FOR UPDATE",
+          "SELECT id,status,city FROM franchiser WHERE id=? LOCK IN SHARE MODE",
           [franchiseId],
         );
         if (franchises[0]?.status !== "active")
           throw fail(409, "Only an active franchise can add members.");
+        if (franchises[0].city && data.city.toLowerCase() !== franchises[0].city.trim().toLowerCase()) throw fail(400, "Driver/rider city must match the franchise city.");
+        if (franchises[0].city) data.city = franchises[0].city.trim();
         const [retries] = await conn.query(
           "SELECT * FROM admin_franchise_member_requests WHERE request_key=? FOR UPDATE",
           [body.idempotency_key],
@@ -272,6 +273,7 @@ function createAdminFranchiseMembers(pool) {
             "DELETE FROM employee_franchise_access WHERE employee_id=?",
             [employee],
           );
+        await conn.query("UPDATE employee SET version=version+1,updated_by=?,updated_at=CURRENT_TIMESTAMP WHERE emp_id=?",[actor,employee]);
         await conn.commit();
         return { employee_id: employee, franchise_id: franchise };
       } catch (e) {

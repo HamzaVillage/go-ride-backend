@@ -20,6 +20,7 @@ function createEmployeeRouter(pool) {
     const respond = action => async (req, res) => { try { res.json({ success: true, data: await action(req) }); } catch (err) { error(res, err); } };
     router.get('/', respond(req => service.list(req.query)));
     router.get('/catalog', respond(() => service.catalog()));
+    router.get('/franchises', respond(req => service.franchiseOptions(req.user.employeeId)));
     router.post('/roles', respond(req => service.saveRole(null, req.user.employeeId, req.body)));
     router.patch('/roles/:id', respond(req => service.saveRole(req.params.id, req.user.employeeId, req.body)));
     router.patch('/functions/:id', respond(req => service.saveFunction(req.params.id, req.user.employeeId, req.body)));

@@ -1,5 +1,5 @@
 const crypto=require('node:crypto');
-const {getAccess}=require('./employeeAccess');
+const {getAccess,requirePermission}=require('./employeeAccess');
 const { pagination } = require('./adminDrivers');
 const STATUSES = ['active', 'inactive', 'pending', 'suspended'];
 const fail = (status, message) => Object.assign(new Error(message), { status });
@@ -25,6 +25,28 @@ function normalize(row) {
 }
 function createAdminFranchisesService(pool) {
     return {
+        async create(actor, body={}) {
+            if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(k=>!['company_name','city','contact_person','email','phone','address','status'].includes(k))) throw fail(400,'Invalid franchise details.');
+            const data={};
+            for (const [key,max,required] of [['company_name',250,true],['city',100,true],['contact_person',50,true],['email',250,false],['phone',50,true],['address',255,false]]) {
+                const value=body[key] ?? '';
+                if(typeof value!=='string' || value.length>max || (required && !value.trim())) throw fail(400,`Enter a valid ${key.replaceAll('_',' ')}.`);
+                data[key]=value.trim() || null;
+            }
+            if (data.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) throw fail(400,'Enter a valid email.');
+            if (!/^\+?[\d ()-]{7,50}$/.test(data.phone)) throw fail(400,'Enter a valid phone number.');
+            data.status=body.status ?? 'active'; if (!STATUSES.includes(data.status)) throw fail(400,'Invalid franchise status.');
+            data.country='Pakistan';
+            const conn=await pool.getConnection();
+            try {
+                await conn.beginTransaction();
+                const access=await getAccess(conn,actor,{lock:true});
+                requirePermission(access,'franchises','can_add');
+                if (!access.is_super_admin) throw fail(403,'Only a super administrator can create franchises.');
+                const [result]=await conn.query(`INSERT INTO franchiser (${Object.keys(data).join(',')}) VALUES (${Object.keys(data).map(()=>'?').join(',')})`,Object.values(data));
+                await conn.commit(); return {id:Number(result.insertId)};
+            } catch(e) { await conn.rollback().catch(()=>{});throw e; } finally {conn.release();}
+        },
         async update(id,actor,body={}) {
             if(!body.changes||typeof body.changes!=='object'||Array.isArray(body.changes)||!Object.keys(body.changes).length)throw fail(400,'Choose profile changes.');
             const changes={};for(const [key,value]of Object.entries(body.changes)){
@@ -33,25 +55,26 @@ function createAdminFranchisesService(pool) {
                 if(key==='profile_complete'){if(typeof value!=='boolean')throw fail(400,'Profile completion must be true or false.');changes[key]=Number(value);continue;}
                 if(typeof value!=='string'||value.length>editable[key])throw fail(400,`Invalid ${key}.`);
                 if(key==='status'&&!STATUSES.includes(value))throw fail(400,'Invalid franchise status.');
-                if(key==='company_name'&&!value.trim())throw fail(400,'Company name is required.');
+                if(['company_name','city'].includes(key)&&!value.trim())throw fail(400,'Company name is required.');
                 if(key==='email'&&value&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value))throw fail(400,'Enter a valid email.');
                 changes[key]=value.trim()||null;
             }
             if(!/^[1-9]\d*$/.test(String(id))||Number(id)>2147483647)throw fail(400,'Invalid franchise ID.');
             const conn=await pool.getConnection();try{
-                await conn.beginTransaction();const access=await getAccess(conn,actor,{lock:true});if(!access.functions.includes('franchises'))throw fail(403,'Franchise screen access is required.');
+                await conn.beginTransaction();const access=await getAccess(conn,actor,{lock:true});requirePermission(access,'franchises','can_edit');
                 const [rows]=await conn.query(`SELECT ${summary}, ${details} FROM franchiser f WHERE f.id=? FOR UPDATE`,[Number(id)]);if(!rows.length)throw fail(404,'Franchise not found.');
                 if(normalize(rows[0]).version!==body.version)throw fail(409,'This franchise changed elsewhere. Reopen its latest details.');
                 await conn.query(`UPDATE franchiser SET ${Object.keys(changes).map(k=>`${k}=?`).join(',')},updated_at=CURRENT_TIMESTAMP WHERE id=?`,[...Object.values(changes),Number(id)]);
                 await conn.commit();console.info('Admin franchise profile updated',{adminId:actor,franchiseId:Number(id)});return {id:Number(id)};
             }catch(e){await conn.rollback().catch(()=>{});throw e;}finally{conn.release();}
         },
-        async list(query = {}) {
+        async list(query = {}, franchiseId = null) {
             const { page, limit, offset } = pagination(query);
             if (query.q !== undefined && (typeof query.q !== 'string' || query.q.length > 100)) throw fail(400, 'Search must be at most 100 characters.');
             const status = query.status === undefined ? 'all' : query.status;
             if (typeof status !== 'string' || (status !== 'all' && !STATUSES.includes(status))) throw fail(400, 'Invalid franchise status.');
             const clauses = [], params = [], search = (query.q || '').trim();
+            if (franchiseId) { clauses.push('f.id = ?'); params.push(franchiseId); }
             if (search) {
                 const fields = ['CAST(f.id AS CHAR)', 'f.company_name', 'f.legal_name', 'f.contact_person', 'f.email', 'f.phone', 'f.city', 'f.area'];
                 const like = `%${search.replace(/[=%_]/g, value => `=${value}`)}%`;

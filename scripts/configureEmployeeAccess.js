@@ -24,6 +24,8 @@ async function main() {
             const [rows] = await conn.query(`SHOW COLUMNS FROM ${table}`);
             for (const key of [...columns, 'created_at', 'created_by', 'updated_at', 'updated_by', 'is_active', 'is_deleted']) if (!rows.some(column => column.Field === key)) throw new Error(`${table}.${key} is missing. Existing tables need a reviewed upgrade; leave EMPLOYEE_ACCESS_ENABLED=false.`);
         }
+        await require('./configureRolePermissions').configure(conn,{apply:true});
+        await require('./configureFranchises').configure(conn,{apply:true});
         await require('./separateStaffIdentities').migrate(conn, { apply: true });
         console.log('Employee-access tables and screen catalog installed. Set EMPLOYEE_ACCESS_ENABLED=true and restart the backend.');
         console.log('Create the initial super administrator with setup:staff-admin. Existing installations must run setup:staff-identities before starting this backend.');

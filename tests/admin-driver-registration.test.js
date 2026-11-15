@@ -13,7 +13,7 @@ function fixture({ owner=null, duplicate=false, denied=false, failure=false, los
    if(sql.includes('GET_LOCK'))return [[{acquired:lockFailure?0:1}]];
    if(sql.includes('RELEASE_LOCK'))return [[{}]];
    if(sql.includes('FROM employee WHERE'))return [[{emp_id:7,account_type:'employee',is_active:1,is_deleted:0}]];
-   if(sql.includes('SELECT DISTINCT'))return [denied?[]:[{function_code:'drivers'},{function_code:'city_to_city_drivers'}]];
+   if(sql.includes('SELECT DISTINCT'))return [denied?[]:[{function_code:'drivers',can_view:1,can_add:1,can_edit:1,can_delete:1},{function_code:'city_to_city_drivers',can_view:1,can_add:1,can_edit:1,can_delete:1}]];
    if(sql.includes('FROM admin_driver_registration_requests'))return [state.request?[state.request]:[]];
    if(sql.includes('FROM users WHERE Email'))return [[]];
    if(sql.includes('FROM users WHERE'))return [state.user?[state.user]:[]];
