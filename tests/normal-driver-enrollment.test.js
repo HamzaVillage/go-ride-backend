@@ -24,6 +24,7 @@ function fixture({
   failInsert = false,
   failCode = false,
   city = true,
+  blankCodeDefault = false,
 } = {}) {
   const state = {
     users: existing
@@ -39,7 +40,7 @@ function fixture({
           },
         ]
       : [],
-    drivers: [],
+    drivers: blankCodeDefault ? [{id:24,User_ID_FK:99,phone:"03009876543",driver_code:"",status:"active"}] : [],
     queries: [],
     commits: 0,
     rollbacks: 0,
@@ -116,6 +117,9 @@ function fixture({
       const keys = sql.match(/\((.*?)\)/)[1].split(",");
       const row = { id: 25, status: "pending" };
       keys.slice(0, -2).forEach((key, i) => (row[key] = args[i]));
+      if (blankCodeDefault && row.driver_code === undefined) row.driver_code = '';
+      if (blankCodeDefault && row.driver_code != null && state.drivers.some(d=>d.driver_code===row.driver_code))
+        throw Object.assign(new Error('Duplicate driver code default'),{code:'ER_DUP_ENTRY',sqlMessage:"Duplicate entry '' for key 'driver_code'"});
       state.drivers.push(row);
       return [{ insertId: 25 }];
     }
@@ -303,4 +307,13 @@ test('failed enrollment preserves the existing rider and rolls back the pending 
     await assert.rejects(f.service.enroll(42,body,{Photo:'https://fixture.example/uploads/photo.jpg'}));
     assert.deepEqual(f.state.users,original);assert.equal(f.state.drivers.length,0);assert.equal(f.state.commits,0);assert.equal(f.state.rollbacks,1);
   }
+});
+
+test('enrollment works when a legacy nullable driver_code column defaults to an occupied empty string',async()=>{
+ const f=fixture({city:false,blankCodeDefault:true});
+ const result=await f.service.enroll(42,body);
+ assert.equal(result.driver_code,'GRD-1025');assert.equal(f.state.drivers.length,2);
+ assert.equal(f.state.drivers[0].driver_code,'');assert.equal(f.state.drivers[1].driver_code,'GRD-1025');
+ const insert=f.state.queries.find(q=>q.sql.startsWith('INSERT INTO drivers'));
+ const keys=insert.sql.match(/\((.*?)\)/)[1].split(',');assert.equal(insert.args[keys.indexOf('driver_code')],null);
 });

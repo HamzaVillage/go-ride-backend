@@ -77,6 +77,10 @@ function validate(body) {
   }
   return out;
 }
+async function driverWrite(conn, sql, params, operation) {
+  try { return await conn.query(sql, params); }
+  catch(error) { error.enrollment_operation=operation; throw error; }
+}
 function createNormalDriverEnrollment(pool) {
   async function transaction(phone, fn) {
     const conn = await pool.getConnection();
@@ -198,6 +202,9 @@ function createNormalDriverEnrollment(pool) {
     }
     const fields = {
       User_ID_FK: user.User_ID_Pk,
+      // Nullable unique codes must not inherit an occupied legacy blank default.
+      // Assign the final code only after MySQL returns the new driver ID.
+      driver_code: null,
       full_name: data.Name,
       father_name: data.FatherName,
       cnic: data.Cnic,
@@ -215,18 +222,19 @@ function createNormalDriverEnrollment(pool) {
       ...paths,
       password: user.Password || null,
     };
-    const [r] = await conn.query(
+    const [r] = await driverWrite(conn,
       `INSERT INTO drivers (${Object.keys(fields).join(
         ","
       )},status,join_date) VALUES (${Object.keys(fields)
         .map(() => "?")
         .join(",")},'pending',CURDATE())`,
-      Object.values(fields)
+      Object.values(fields),
+      "insert_driver"
     );
-    await conn.query("UPDATE drivers SET driver_code=? WHERE id=?", [
+    await driverWrite(conn,"UPDATE drivers SET driver_code=? WHERE id=?", [
       formatDriverCode(r.insertId),
       r.insertId,
-    ]);
+    ],"assign_driver_code");
     return {
       id: r.insertId,
       user_id: user.User_ID_Pk,

@@ -35,3 +35,8 @@ test('database encoding failures identify only a known column, never submitted v
  const f=fixture({failure:Object.assign(new Error('private details'),{code:'ER_TRUNCATED_WRONG_VALUE_FOR_FIELD',sqlMessage:"Incorrect string value: 'private-user-value' for column 'full_name' at row 1",sql:'private SQL'})});
  await f.submit();assert.equal(f.status,500);assert.equal(f.logs[0].details.column,'full_name');assert.doesNotMatch(JSON.stringify([f.response,f.logs]),/private-user-value|private SQL|private details/);
 });
+test('duplicate diagnostics record only constraint names and distinguish CNIC conflicts from generated IDs',async()=>{
+ for(const [key,status,code] of [['drivers.cnic',409,'DRIVER_CNIC_IN_USE'],['driver_code',503,'ENROLLMENT_SETUP_REQUIRED'],['PRIMARY',503,'ENROLLMENT_SETUP_REQUIRED']]){
+  const f=fixture({failure:Object.assign(new Error('private duplicate'),{code:'ER_DUP_ENTRY',sqlMessage:`Duplicate entry 'private-value' for key '${key}'`})});await f.submit();assert.equal(f.status,status);assert.equal(f.response.code,code);assert.equal(f.logs[0].details.unique_key,key);assert.doesNotMatch(JSON.stringify([f.response,f.logs]),/private-value|private duplicate/);
+ }
+});
