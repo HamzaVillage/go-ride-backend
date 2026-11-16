@@ -283,3 +283,24 @@ test("forged mobile and inactive users cannot enroll against another account", a
 test('a public driver without a password also receives a canonical linked personal account',async()=>{
  const f=fixture({existing:false,city:false});const {Password,...withoutPassword}=body;await f.service.registerPublic(withoutPassword);assert.equal(f.state.users[0].Password,null);assert.equal(f.state.drivers[0].password,null);assert.equal(f.state.drivers[0].User_ID_FK,f.state.users[0].User_ID_Pk);
 });
+
+test('an existing rider enrolls as a driver with uploaded documents without creating or replacing the rider account', async () => {
+  const f = fixture({city:false});
+  const original = structuredClone(f.state.users[0]);
+  const uploads = {Photo:'https://fixture.example/uploads/photo.jpg',CNIC_Front:'admin-private:front.jpg',CNIC_Back:'admin-private:back.jpg',License:'admin-private:license.jpg',Vehicle_Running_Page:'admin-private:registration.jpg'};
+  const result = await f.service.enroll(42,body,uploads);
+  assert.equal(result.user_id,42);assert.equal(result.status,'pending');
+  assert.deepEqual(f.state.users,[original]);assert.equal(f.state.drivers.length,1);
+  assert.equal(f.state.drivers[0].User_ID_FK,42);
+  assert.equal(f.state.drivers[0].cnic_front_path,uploads.CNIC_Front);
+  assert.equal(f.state.queries.some(q=>/^(INSERT INTO|UPDATE|DELETE FROM) users/.test(q.sql)),false);
+  const retry=await f.service.enroll(42,body,uploads);
+  assert.equal(retry.already_submitted,true);assert.equal(f.state.drivers.length,1);
+});
+test('failed enrollment preserves the existing rider and rolls back the pending driver', async () => {
+  for(const failure of [{failInsert:true},{failCode:true}]){
+    const f=fixture({city:false,...failure}),original=structuredClone(f.state.users);
+    await assert.rejects(f.service.enroll(42,body,{Photo:'https://fixture.example/uploads/photo.jpg'}));
+    assert.deepEqual(f.state.users,original);assert.equal(f.state.drivers.length,0);assert.equal(f.state.commits,0);assert.equal(f.state.rollbacks,1);
+  }
+});
